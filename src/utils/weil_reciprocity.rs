@@ -1,15 +1,14 @@
-use halo2_proofs::halo2curves::ff::PrimeField;
-use halo2_proofs::{arithmetic::Field, halo2curves::CurveAffine};
-use rand::Rng;
-
 use crate::utils::function_field::Poly;
+use halo2_proofs::{arithmetic::Field, halo2curves::CurveAffine};
 
+#[allow(dead_code)]
 struct Challenge<C: CurveAffine> {
     mu: C::Base,
     lambda: C::Base,
     points: [C; 3],
 }
 
+#[allow(dead_code)]
 impl<C: CurveAffine> Challenge<C> {
     fn from_simple(pts: (C, C)) -> Self {
         let (x0, y0) = Self::to_xy(pts.0);
@@ -38,9 +37,9 @@ impl<C: CurveAffine> Challenge<C> {
     }
 
     fn from_higher(pt: C) -> Self {
-        let (x,y) = Self::to_xy(pt);
-        let lambda = ((x+x+x)*x + C::a()) * (y+y).invert().unwrap();
-        let mu = y -lambda * x;
+        let (x, y) = Self::to_xy(pt);
+        let lambda = ((x + x + x) * x + C::a()) * (y + y).invert().unwrap();
+        let mu = y - lambda * x;
 
         let poly = Poly::from_vec(vec![
             C::b() - mu.square(),
@@ -58,7 +57,6 @@ impl<C: CurveAffine> Challenge<C> {
             lambda,
             points: [pt, pt, pt3],
         }
-
     }
 
     // evaluate dx/dz at point
@@ -77,15 +75,20 @@ impl<C: CurveAffine> Challenge<C> {
     fn higher_c2(&self) -> C::Base {
         let x0 = *self.points[0].coordinates().unwrap().x();
         let (x2, y2) = Self::to_xy(self.points[2]);
-        ((y2+y2) * (x0 - x2)) * ((x2+x2+x2)*x2 + C::a() - (y2+y2) * self.lambda).invert().unwrap()
+        ((y2 + y2) * (x0 - x2))
+            * ((x2 + x2 + x2) * x2 + C::a() - (y2 + y2) * self.lambda)
+                .invert()
+                .unwrap()
     }
 }
 
+#[allow(dead_code)]
 fn trace_simple<C: CurveAffine>(point: C, clg: &Challenge<C>) -> C::Base {
     let pt = point.coordinates().unwrap();
     (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
 }
 
+#[allow(dead_code)]
 fn trace_higher<C: CurveAffine>(point: C, clg: &Challenge<C>) -> C::Base {
     let pt = point.coordinates().unwrap();
     let x_a0 = *clg.points[0].coordinates().unwrap().x();
@@ -94,13 +97,10 @@ fn trace_higher<C: CurveAffine>(point: C, clg: &Challenge<C>) -> C::Base {
 
 #[cfg(test)]
 mod test {
-    use crate::utils::function_field::*;
-
     use super::*;
-    use halo2_proofs::halo2curves::group::Curve;
+    use crate::utils::function_field::*;
     use halo2_proofs::halo2curves::secp256k1::{Fp, Secp256k1Affine};
     use rand::thread_rng;
-    use std::time::SystemTime;
 
     #[test]
     fn test_simple_challenge() {
@@ -153,9 +153,11 @@ mod test {
 
         // equation (2) in (https://eprint.iacr.org/2022/596)
         let c2 = clg.higher_c2();
-        let d_prime_d_0 = f.evaluate_derivative(clg.points[0]) * f.evaluate(clg.points[0]).invert().unwrap();
-        let d_prime_d_2 = f.evaluate_derivative(clg.points[2]) * f.evaluate(clg.points[2]).invert().unwrap();
-        let rhs = c2* d_prime_d_2 - (c2 + clg.lambda + clg.lambda) * d_prime_d_0;
+        let d_prime_d_0 =
+            f.evaluate_derivative(clg.points[0]) * f.evaluate(clg.points[0]).invert().unwrap();
+        let d_prime_d_2 =
+            f.evaluate_derivative(clg.points[2]) * f.evaluate(clg.points[2]).invert().unwrap();
+        let rhs = c2 * d_prime_d_2 - (c2 + clg.lambda + clg.lambda) * d_prime_d_0;
         let lhs = points.iter().fold(Fp::ZERO, |acc, &next| {
             acc + trace_higher::<Secp256k1Affine>(next, &clg)
         });

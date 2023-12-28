@@ -216,15 +216,13 @@ impl<F: PrimeField> Poly<F> {
     // given n-1 zeros of polynomial, find another zero.
     pub fn another_zero(&self, zeros: &[F]) -> F {
         let n = self.deg();
-        assert_eq!(zeros.len(), n-1);
+        assert_eq!(zeros.len(), n - 1);
 
-        let mut q = self.clone();
-        for i in 0..n-1 {
-            let r;
-            (q, r) = Self::euclidean(&q, &Self::from_vec(vec![-zeros[i], F::ONE]));
+        let q = zeros.iter().fold(self.clone(), |poly, &zero| {
+            let (q, r) = Self::euclidean(&poly, &Self::from_vec(vec![-zero, F::ONE]));
             assert!(r.is_zero());
-        }
-        assert!(q.deg() == 1);
+            q
+        });
         -q.coeff[0]
     }
 }
@@ -378,6 +376,7 @@ impl<C: CurveAffine> FunctionField<C> {
     }
 }
 
+#[allow(dead_code)]
 // for test, random points P_i such that \sum P_i = O
 pub fn random_points(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Affine> {
     let mut points: Vec<Secp256k1Affine> = vec![];
