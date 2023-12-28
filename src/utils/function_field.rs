@@ -1,11 +1,14 @@
 use halo2_proofs::arithmetic::*;
 use halo2_proofs::halo2curves::ff::PrimeField;
+use halo2_proofs::halo2curves::group::Curve;
+use halo2_proofs::halo2curves::secp256k1::Secp256k1Affine;
+use rand::rngs::ThreadRng;
 use std::ops::{Add, Mul, Neg};
 use std::vec;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Poly<F: PrimeField> {
-    coeff: Vec<F>,
+    pub coeff: Vec<F>,
 }
 
 type PolyVec<F> = (Poly<F>, Poly<F>);
@@ -13,23 +16,23 @@ type PolyMat<F> = ((Poly<F>, Poly<F>), (Poly<F>, Poly<F>));
 
 #[allow(dead_code)]
 impl<F: PrimeField> Poly<F> {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self { coeff: vec![] }
     }
 
-    fn one() -> Self {
+    pub fn one() -> Self {
         Self {
             coeff: vec![F::ONE],
         }
     }
 
-    fn zero() -> Self {
+    pub fn zero() -> Self {
         Self {
             coeff: vec![F::ZERO],
         }
     }
 
-    fn deg(&self) -> usize {
+    pub fn deg(&self) -> usize {
         if let Some(deg) = self.coeff.iter().rev().position(|&a| a != F::ZERO) {
             self.coeff.len() - deg - 1
         } else {
@@ -37,22 +40,22 @@ impl<F: PrimeField> Poly<F> {
         }
     }
 
-    fn from_vec(coeff: Vec<F>) -> Self {
+    pub fn from_vec(coeff: Vec<F>) -> Self {
         Self { coeff }
     }
 
-    fn constant(value: F) -> Self {
+    pub fn constant(value: F) -> Self {
         Self::from_vec(vec![value])
     }
 
     // output coeff * x^deg
-    fn monomial(deg: usize, coeff: F) -> Self {
+    pub fn monomial(deg: usize, coeff: F) -> Self {
         let mut out = vec![F::ZERO; deg];
         out.push(coeff);
         Self::from_vec(out)
     }
 
-    fn evaluate(&self, point: F) -> F {
+    pub fn evaluate(&self, point: F) -> F {
         let n = self.deg();
         let mut out = self.coeff[n];
         for i in (0..n).rev() {
@@ -62,7 +65,7 @@ impl<F: PrimeField> Poly<F> {
         out
     }
 
-    fn differentiate(&self) -> Self {
+    pub fn derivative(&self) -> Self {
         Self::from_vec(
             self.coeff
                 .iter()
@@ -144,7 +147,7 @@ impl<F: PrimeField> Poly<F> {
     }
 
     // output (q, r) such that f = q * g +r
-    fn euclidean(f: &Poly<F>, g: &Poly<F>) -> PolyVec<F> {
+    pub fn euclidean(f: &Poly<F>, g: &Poly<F>) -> PolyVec<F> {
         assert!(g.is_not_zero());
 
         let d = g.deg();
@@ -161,7 +164,7 @@ impl<F: PrimeField> Poly<F> {
         (q, r)
     }
 
-    fn is_zero(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         for i in 0..self.coeff.len() {
             if self.coeff[i] != F::ZERO {
                 return false;
@@ -170,11 +173,11 @@ impl<F: PrimeField> Poly<F> {
         true
     }
 
-    fn is_not_zero(&self) -> bool {
+    pub fn is_not_zero(&self) -> bool {
         !self.is_zero()
     }
 
-    fn lead_coeff(&self) -> F {
+    pub fn lead_coeff(&self) -> F {
         self.coeff[self.deg()]
     }
 
@@ -206,8 +209,23 @@ impl<F: PrimeField> Poly<F> {
     }
 
     // delete useless zero terms
-    fn clear(&self) -> Self {
+    pub fn clear(&self) -> Self {
         Self::from_vec(self.coeff[0..self.deg() + 1].to_vec())
+    }
+
+    // given n-1 zeros of polynomial, find another zero.
+    pub fn another_zero(&self, zeros: &[F]) -> F {
+        let n = self.deg();
+        assert_eq!(zeros.len(), n-1);
+
+        let mut q = self.clone();
+        for i in 0..n-1 {
+            let r;
+            (q, r) = Self::euclidean(&q, &Self::from_vec(vec![-zeros[i], F::ONE]));
+            assert!(r.is_zero());
+        }
+        assert!(q.deg() == 1);
+        -q.coeff[0]
     }
 }
 
@@ -282,13 +300,13 @@ pub struct FunctionField<C: CurveAffine> {
 #[allow(dead_code)]
 impl<C: CurveAffine> FunctionField<C> {
     // line represented by y=\lambda x + \mu
-    fn line(lambda: C::Base, mu: C::Base) -> Self {
+    pub fn line(lambda: C::Base, mu: C::Base) -> Self {
         let a = Poly::from_vec(vec![mu, lambda]);
         let b = Poly::constant(C::Base::ONE);
         Self { a, b }
     }
 
-    fn evaluate(&self, point: C) -> C::Base {
+    pub fn evaluate(&self, point: C) -> C::Base {
         let coord = point.coordinates().unwrap();
         let x = *coord.x();
         let y = *coord.y();
@@ -296,12 +314,12 @@ impl<C: CurveAffine> FunctionField<C> {
         self.a.evaluate(x) - y * self.b.evaluate(x)
     }
 
-    fn is_zero_at(&self, point: C) -> bool {
+    pub fn is_zero_at(&self, point: C) -> bool {
         self.evaluate(point) == C::Base::ZERO
     }
 
     // degree of function field (equal to the degree of O, point at infinity)
-    fn deg(&self) -> usize {
+    pub fn deg(&self) -> usize {
         let a = 2 * self.a.deg();
         let b = 2 * self.b.deg() + 3;
         if a > b {
@@ -317,7 +335,7 @@ impl<C: CurveAffine> FunctionField<C> {
     }
 
     // given points, output interpolation using Half-GCD.
-    fn interpolate_mumford(points: &[C]) -> Self {
+    pub fn interpolate_mumford(points: &[C]) -> Self {
         let (u, v) = Self::mumford_repn(points);
         let (_, (c, b)) = Poly::half_gcd(&u, &v);
         let a = u * &c + &(v * &b);
@@ -345,6 +363,34 @@ impl<C: CurveAffine> FunctionField<C> {
 
         (u, Poly::from_vec(v))
     }
+
+    // only for test. generate derivates for each time.
+    pub fn evaluate_derivative(&self, point: C) -> C::Base {
+        let coord = point.coordinates().unwrap();
+        let (x, y) = (*coord.x(), *coord.y());
+
+        let a_prime = self.a.derivative().evaluate(x);
+        let b_prime = self.b.derivative().evaluate(x);
+
+        let tmp = ((x + x + x) * x + C::a()) * (y + y).invert().unwrap();
+
+        a_prime - tmp * self.b.evaluate(x) - y * b_prime
+    }
+}
+
+// for test, random points P_i such that \sum P_i = O
+pub fn random_points(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Affine> {
+    let mut points: Vec<Secp256k1Affine> = vec![];
+    for _ in 0..n - 1 {
+        points.push(Secp256k1Affine::random(rng.clone()));
+    }
+    let sum = points
+        .iter()
+        .skip(1)
+        .fold(points[0], |acc, next| acc.add(next).to_affine());
+    points.push(-sum);
+
+    points
 }
 
 // Given integer, output ((v_j), (w_j)) such that num = \sum_{j=0} (v_j - w_j) (-3)^j. Both v_j and w_j cannot be one.
@@ -356,7 +402,7 @@ impl<C: CurveAffine> FunctionField<C> {
 mod test {
     use super::*;
     use halo2_proofs::halo2curves::group::Curve;
-    use halo2_proofs::halo2curves::secp256k1::Secp256k1Affine;
+    use halo2_proofs::halo2curves::secp256k1::{Fp, Secp256k1Affine};
     use rand::thread_rng;
     use std::time::SystemTime;
 
@@ -364,16 +410,7 @@ mod test {
     fn test_interpolate_mumford() {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
-        let n = 45;
-        let mut points: Vec<Secp256k1Affine> = vec![];
-        for _ in 0..n - 1 {
-            points.push(Secp256k1Affine::random(rng.clone()));
-        }
-        let sum = points
-            .iter()
-            .skip(1)
-            .fold(points[0], |acc, next| acc.add(next).to_affine());
-        points.push(-sum);
+        let points = random_points(rng, 45);
 
         // interpolate P_i
         let cur_time = SystemTime::now();
@@ -383,7 +420,7 @@ mod test {
             cur_time.elapsed().unwrap().as_secs()
         );
         println!("{:?}", f.deg_display());
-        for i in 0..n {
+        for i in 0..points.len() {
             assert!(f.is_zero_at(points[i]));
         }
     }
