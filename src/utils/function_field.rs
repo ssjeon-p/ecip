@@ -6,7 +6,7 @@ use rand::rngs::ThreadRng;
 use std::ops::{Add, Mul, Neg};
 use std::vec;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Poly<F: PrimeField> {
     pub coeff: Vec<F>,
 }
@@ -16,10 +16,6 @@ type PolyMat<F> = ((Poly<F>, Poly<F>), (Poly<F>, Poly<F>));
 
 #[allow(dead_code)]
 impl<F: PrimeField> Poly<F> {
-    pub fn new() -> Self {
-        Self { coeff: vec![] }
-    }
-
     pub fn one() -> Self {
         Self {
             coeff: vec![F::ONE],
@@ -291,8 +287,8 @@ impl<F: PrimeField> Neg for Poly<F> {
 
 // function field element represented by a(x)-yb(x), how about Lagrange?
 pub struct FunctionField<C: CurveAffine> {
-    a: Poly<C::Base>,
-    b: Poly<C::Base>,
+    pub a: Poly<C::Base>,
+    pub b: Poly<C::Base>,
 }
 
 #[allow(dead_code)]
@@ -400,8 +396,6 @@ pub fn random_points(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Affine> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use halo2_proofs::halo2curves::group::Curve;
-    use halo2_proofs::halo2curves::secp256k1::{Fp, Secp256k1Affine};
     use rand::thread_rng;
     use std::time::SystemTime;
 

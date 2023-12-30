@@ -2,15 +2,16 @@ use crate::utils::function_field::Poly;
 use halo2_proofs::{arithmetic::Field, halo2curves::CurveAffine};
 
 #[allow(dead_code)]
-struct Challenge<C: CurveAffine> {
-    mu: C::Base,
-    lambda: C::Base,
-    points: [C; 3],
+#[derive(Debug, Default, Clone)]
+pub struct MSMChallenge<C: CurveAffine> {
+    pub mu: C::Base,
+    pub lambda: C::Base,
+    pub points: [C; 3],
 }
 
 #[allow(dead_code)]
-impl<C: CurveAffine> Challenge<C> {
-    fn from_simple(pts: (C, C)) -> Self {
+impl<C: CurveAffine> MSMChallenge<C> {
+    pub fn from_simple(pts: (C, C)) -> Self {
         let (x0, y0) = Self::to_xy(pts.0);
         let (x1, y1) = Self::to_xy(pts.1);
         assert_ne!(x0, x1);
@@ -36,7 +37,7 @@ impl<C: CurveAffine> Challenge<C> {
         }
     }
 
-    fn from_higher(pt: C) -> Self {
+    pub fn from_higher(pt: C) -> Self {
         let (x, y) = Self::to_xy(pt);
         let lambda = ((x + x + x) * x + C::a()) * (y + y).invert().unwrap();
         let mu = y - lambda * x;
@@ -83,13 +84,13 @@ impl<C: CurveAffine> Challenge<C> {
 }
 
 #[allow(dead_code)]
-fn trace_simple<C: CurveAffine>(point: C, clg: &Challenge<C>) -> C::Base {
+pub fn trace_simple<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base {
     let pt = point.coordinates().unwrap();
     (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
 }
 
 #[allow(dead_code)]
-fn trace_higher<C: CurveAffine>(point: C, clg: &Challenge<C>) -> C::Base {
+pub fn trace_higher<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base {
     let pt = point.coordinates().unwrap();
     let x_a0 = *clg.points[0].coordinates().unwrap().x();
     (x_a0 - *pt.x()) * (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
@@ -113,13 +114,13 @@ mod test {
         let rng = &mut thread_rng();
         let pt0 = Secp256k1Affine::random(rng.clone());
         let pt1 = Secp256k1Affine::random(rng.clone());
-        let clg = Challenge::from_simple((pt0, pt1));
+        let clg = MSMChallenge::from_simple((pt0, pt1));
 
         // equation (1) in (https://eprint.iacr.org/2022/596)
         let dx_dz: Vec<Fp> = clg
             .points
             .into_iter()
-            .map(|pt| Challenge::dx_dz_simple(pt, clg.lambda))
+            .map(|pt| MSMChallenge::dx_dz_simple(pt, clg.lambda))
             .collect();
 
         let d_prime_d: Vec<Fp> = clg
@@ -149,7 +150,7 @@ mod test {
         // random challenge
         let rng = &mut thread_rng();
         let pt = Secp256k1Affine::random(rng.clone());
-        let clg = Challenge::from_higher(pt);
+        let clg = MSMChallenge::from_higher(pt);
 
         // equation (2) in (https://eprint.iacr.org/2022/596)
         let c2 = clg.higher_c2();
