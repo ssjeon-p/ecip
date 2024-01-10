@@ -7,6 +7,7 @@ pub struct MSMChallenge<C: CurveAffine> {
     pub mu: C::Base,
     pub lambda: C::Base,
     pub points: [C; 3],
+    pub dx_dy: [C::Base; 3],
 }
 
 #[allow(dead_code)]
@@ -30,10 +31,15 @@ impl<C: CurveAffine> MSMChallenge<C> {
         let y3 = lambda * x3 + mu;
         let pt3 = CurveAffine::from_xy(x3, y3).unwrap();
 
+        let d0 = ((x0 + x0 + x0) * x0 + C::a()) * (y0 + y0).invert().unwrap();
+        let d1 = ((x1 + x1 + x1) * x1 + C::a()) * (y1 + y1).invert().unwrap();
+        let d2 = ((x3 + x3 + x3) * x3 + C::a()) * (y3 + y3).invert().unwrap();
+
         Self {
             mu,
             lambda,
             points: [pts.0, pts.1, pt3],
+            dx_dy: [d0, d1, d2],
         }
     }
 
@@ -53,10 +59,13 @@ impl<C: CurveAffine> MSMChallenge<C> {
         let y3 = lambda * x3 + mu;
         let pt3 = CurveAffine::from_xy(x3, y3).unwrap();
 
+        let d2 = ((x3 + x3 + x3) * x3 + C::a()) * (y3 + y3).invert().unwrap();
+
         Self {
             mu,
             lambda,
             points: [pt, pt, pt3],
+            dx_dy: [lambda, lambda, d2],
         }
     }
 
@@ -73,7 +82,7 @@ impl<C: CurveAffine> MSMChallenge<C> {
         (*coord.x(), *coord.y())
     }
 
-    fn higher_c2(&self) -> C::Base {
+    pub fn higher_c2(&self) -> C::Base {
         let x0 = *self.points[0].coordinates().unwrap().x();
         let (x2, y2) = Self::to_xy(self.points[2]);
         ((y2 + y2) * (x0 - x2))
@@ -92,8 +101,8 @@ pub fn trace_simple<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base 
 #[allow(dead_code)]
 pub fn trace_higher<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base {
     let pt = point.coordinates().unwrap();
-    let x_a0 = *clg.points[0].coordinates().unwrap().x();
-    (x_a0 - *pt.x()) * (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
+    let x0 = *clg.points[0].coordinates().unwrap().x();
+    (x0 - *pt.x()) * (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
 }
 
 #[cfg(test)]

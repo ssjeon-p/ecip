@@ -285,6 +285,7 @@ impl<F: PrimeField> Neg for Poly<F> {
     }
 }
 
+#[derive(Clone)]
 // function field element represented by a(x)-yb(x), how about Lagrange?
 pub struct FunctionField<C: CurveAffine> {
     pub a: Poly<C::Base>,
@@ -331,8 +332,10 @@ impl<C: CurveAffine> FunctionField<C> {
     // given points, output interpolation using Half-GCD.
     pub fn interpolate_mumford(points: &[C]) -> Self {
         let (u, v) = Self::mumford_repn(points);
-        let (_, (c, b)) = Poly::half_gcd(&u, &v);
+        let (_, (c, mut b)) = Poly::half_gcd(&u, &v);
         let a = u * &c + &(v * &b);
+        b.coeff
+            .extend_from_slice(&[C::Base::ZERO, C::Base::ZERO, C::Base::ZERO]);
         let out = Self { a: a.clear(), b };
 
         assert_eq!(out.deg(), points.len());
@@ -403,7 +406,7 @@ mod test {
     fn test_interpolate_mumford() {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
-        let points = random_points(rng, 45);
+        let points = random_points(rng, 104);
 
         // interpolate P_i
         let cur_time = SystemTime::now();
