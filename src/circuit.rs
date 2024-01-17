@@ -172,9 +172,9 @@ impl<C: CurveAffine> MSMChip<C> {
                     0,
                     || Value::known(C::Base::ZERO),
                 )?;
-                for offset in 0..self.n {
+                for (offset, pt) in points.iter().enumerate() {
                     self.config.s_pt.enable(&mut region, offset + 1)?;
-                    let pt = points[offset].coordinates().unwrap();
+                    let pt = pt.coordinates().unwrap();
                     region.assign_advice(
                         || "x_i",
                         self.config.point.0,
@@ -210,7 +210,7 @@ impl<C: CurveAffine> MSMChip<C> {
         layouter.assign_region(
             || "divisor witness",
             |mut region| {
-                let f = FunctionField::interpolate_mumford(points);
+                let f = FunctionField::interpolate_mumford_distinct(points);
                 assert_eq!(2 * f.a.deg(), self.n);
                 let deg = self.n / 2;
                 let (x0, y0) = Self::to_xy(self.config.clg.points[0]);
@@ -223,7 +223,7 @@ impl<C: CurveAffine> MSMChip<C> {
                 region.assign_advice(|| "init f_1", self.config.f_0, 0, || f_0)?;
                 region.assign_advice(|| "init f_2", self.config.f_2, 0, || f_2)?;
 
-                for (offset, i) in (1..=deg+1).zip((0..=deg).rev()) {
+                for (offset, i) in (1..=deg + 1).zip((0..=deg).rev()) {
                     self.config.s_div.enable(&mut region, offset)?;
                     let a = region.assign_advice(
                         || "a_i",
@@ -251,7 +251,7 @@ impl<C: CurveAffine> MSMChip<C> {
                 region.assign_advice(|| "init f_p_2", self.config.f_2, deg + 2, || f_prime_2)?;
 
                 // derivative of divisor witness
-                for (offset, i) in (deg+3..=2*deg+2).zip((1..=deg).rev()) {
+                for (offset, i) in (deg + 3..=2 * deg + 2).zip((1..=deg).rev()) {
                     self.config.s_div_prime.enable(&mut region, offset)?;
                     let a_p = region.assign_advice(
                         || "a_p_i",
@@ -349,7 +349,7 @@ impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::function_field::random_points;
+    use crate::utils::function_field;
     use halo2_proofs::{dev::MockProver, halo2curves::secp256k1::Secp256k1Affine};
 
     use super::*;
@@ -358,7 +358,7 @@ mod tests {
         let k = 8;
         let rng = &mut thread_rng();
         const N: usize = 100;
-        let points = random_points(rng, N);
+        let points = function_field::random_points_sum_zero(rng, N);
         let circuit = MSMCircuit::<Secp256k1Affine, N> { points };
         let prover = MockProver::run(k, &circuit, vec![]).unwrap();
         prover.assert_satisfied();
@@ -370,14 +370,14 @@ mod tests {
         // cargo test --all-features -- --nocapture plot_circuit
         use plotters::prelude::*;
 
-        let root = BitMapBackend::new("fib-1-layout.png", (1024, 3096)).into_drawing_area();
+        let root = BitMapBackend::new("layout.png", (1024, 3096)).into_drawing_area();
         root.fill(&WHITE).unwrap();
-        let root = root.titled("Fib 1 Layout", ("sans-serif", 60)).unwrap();
+        let root = root.titled("Layout", ("sans-serif", 60)).unwrap();
 
         let k = 8;
         let rng = &mut thread_rng();
         const N: usize = 100;
-        let points = random_points(rng, N);
+        let points = random_points_sum_zero(rng, N);
         let circuit = MSMCircuit::<Secp256k1Affine, N> { points };
         halo2_proofs::dev::CircuitLayout::default()
             .render(k, &circuit, &root)
