@@ -3,15 +3,15 @@ use std::cmp::max;
 use std::ops::{Add, Mul, Neg, Sub};
 use std::vec;
 
+use super::function_field::field_scalar_mul;
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Poly<F: PrimeField> {
     pub coeff: Vec<F>,
 }
 
-type PolyVec<F> = (Poly<F>, Poly<F>);
 type PolyMat<F> = ((Poly<F>, Poly<F>), (Poly<F>, Poly<F>));
 
-#[allow(dead_code)]
 impl<F: PrimeField> Poly<F> {
     pub fn one() -> Self {
         Self {
@@ -44,14 +44,14 @@ impl<F: PrimeField> Poly<F> {
     }
 
     pub fn constant(value: F) -> Self {
-        Self::from_vec(vec![value])
+        Self { coeff: vec![value] }
     }
 
     // output coeff * x^deg
     pub fn monomial(deg: usize, coeff: F) -> Self {
         let mut out = vec![F::ZERO; deg];
         out.push(coeff);
-        Self::from_vec(out)
+        Self { coeff: out }
     }
 
     pub fn evaluate(&self, point: F) -> F {
@@ -73,7 +73,7 @@ impl<F: PrimeField> Poly<F> {
                 .iter()
                 .enumerate()
                 .skip(1)
-                .map(|(i, a)| F::from_u128(i as u128) * a)
+                .map(|(i, &a)| field_scalar_mul(i as isize, a))
                 .collect(),
         )
     }
@@ -114,7 +114,7 @@ impl<F: PrimeField> Poly<F> {
         let b1 = b.slice(m);
 
         let m1 = Self::half_gcd(&a1, &b1);
-        let (t, s) = Self::mat_vec_mul(m1.clone(), (a.clone(), b.clone()));
+        let (t, s) = Self::mat_vec_mul(&m1, a, b);
 
         if s.is_zero() {
             return m1;
@@ -124,7 +124,7 @@ impl<F: PrimeField> Poly<F> {
 
         if r.is_zero() {
             let m2 = ((Self::zero(), Self::one()), (Self::one(), -q));
-            return Self::mat_mat_mul(m2, m1);
+            return Self::mat_mat_mul(&m2, &m1);
         }
 
         let v = r.lead_coeff().invert().unwrap();
@@ -141,7 +141,7 @@ impl<F: PrimeField> Poly<F> {
 
         let m3 = Self::half_gcd(&s1, &r1);
 
-        Self::mat_mat_mul(Self::mat_mat_mul(m3, m2), m1)
+        Self::mat_mat_mul(&Self::mat_mat_mul(&m3, &m2), &m1)
     }
 
     fn half_ceil(a: usize) -> usize {
@@ -149,7 +149,7 @@ impl<F: PrimeField> Poly<F> {
     }
 
     // output (q, r) such that f = q * g +r
-    pub fn euclidean(f: &Poly<F>, g: &Poly<F>) -> PolyVec<F> {
+    pub fn euclidean(f: &Poly<F>, g: &Poly<F>) -> (Poly<F>, Poly<F>) {
         assert!(g.is_not_zero());
 
         let d = g.deg();
@@ -158,9 +158,10 @@ impl<F: PrimeField> Poly<F> {
         let g_lead_invert = g.coeff[d].invert().unwrap();
 
         while r.is_not_zero() && r.deg() >= d {
-            let t = Self::monomial(r.deg() - d, r.lead_coeff() * g_lead_invert);
-            q = q + &t;
-            r = r + -t * g;
+            let t = &Self::monomial(r.deg() - d, r.lead_coeff() * g_lead_invert);
+            q = q + t;
+            r = r - t * g;
+            // todo: efficient?
         }
 
         (q, r)
@@ -184,22 +185,22 @@ impl<F: PrimeField> Poly<F> {
     }
 
     // 2x2 matrix multiplication
-    fn mat_mat_mul(a: PolyMat<F>, b: PolyMat<F>) -> PolyMat<F> {
+    fn mat_mat_mul(a: &PolyMat<F>, b: &PolyMat<F>) -> PolyMat<F> {
         let first_row = (
             &a.0 .0 * &b.0 .0 + &a.0 .1 * &b.1 .0,
-            a.0 .0 * &b.0 .1 + a.0 .1 * &b.1 .1,
+            &a.0 .0 * &b.0 .1 + &a.0 .1 * &b.1 .1,
         );
         let second_row = (
-            &a.1 .0 * b.0 .0 + &a.1 .1 * b.1 .0,
-            a.1 .0 * b.0 .1 + a.1 .1 * b.1 .1,
+            &a.1 .0 * &b.0 .0 + &a.1 .1 * &b.1 .0,
+            &a.1 .0 * &b.0 .1 + &a.1 .1 * &b.1 .1,
         );
 
         (first_row, second_row)
     }
 
     // 2x2 matrix * 2x1 vector multiplication
-    fn mat_vec_mul(a: PolyMat<F>, b: PolyVec<F>) -> PolyVec<F> {
-        (a.0 .0 * &b.0 + a.0 .1 * &b.1, a.1 .0 * b.0 + a.1 .1 * b.1)
+    fn mat_vec_mul(a: &PolyMat<F>, b0: &Poly<F>, b1: &Poly<F>) -> (Poly<F>, Poly<F>) {
+        (&a.0 .0 * b0 + &a.0 .1 * b1, &a.1 .0 * b0 + &a.1 .1 * b1)
     }
 
     // slice polynomial into f such that input = f*x^m + g
@@ -208,8 +209,8 @@ impl<F: PrimeField> Poly<F> {
     }
 
     // delete useless zero terms
-    pub fn clear(&self) -> Self {
-        Self::from_vec(self.coeff[0..self.deg() + 1].to_vec())
+    pub fn clear(&mut self) {
+        self.coeff.truncate(self.deg() + 1);
     }
 
     // given n-1 zeros of polynomial, find another zero.
@@ -276,6 +277,38 @@ impl<'a, 'b, F: PrimeField> Sub<&'b Poly<F>> for &'a Poly<F> {
         Poly { coeff: out }
     }
 }
+
+impl<'a, 'b, F: PrimeField> Mul<&'b Poly<F>> for &'a Poly<F> {
+    type Output = Poly<F>;
+
+    fn mul(self, rhs: &'b Poly<F>) -> Poly<F> {
+        let l_len = self.deg() + 1;
+        let r_len = rhs.deg() + 1;
+        let mut out = vec![F::ZERO; l_len + r_len - 1];
+        for i in 0..l_len {
+            let tmp: Vec<F> = rhs
+                .coeff
+                .iter()
+                .zip(out.iter().skip(i))
+                .map(|(&a, out_i)| a * self.coeff[i] + out_i)
+                .collect();
+            out.splice(i..i + r_len, tmp);
+        }
+        Poly { coeff: out }
+    }
+}
+
+impl<'a, F: PrimeField> Neg for &'a Poly<F> {
+    type Output = Poly<F>;
+
+    fn neg(self) -> Poly<F> {
+        let out: Vec<F> = self.coeff.iter().map(|&a| -a).collect();
+        Poly { coeff: out }
+    }
+}
+
+
+// without references
 impl<'b, F: PrimeField> Add<&'b Poly<F>> for Poly<F> {
     type Output = Poly<F>;
 
@@ -324,26 +357,6 @@ impl<F: PrimeField> Sub<Poly<F>> for Poly<F> {
     }
 }
 
-impl<'a, 'b, F: PrimeField> Mul<&'b Poly<F>> for &'a Poly<F> {
-    type Output = Poly<F>;
-
-    fn mul(self, rhs: &'b Poly<F>) -> Poly<F> {
-        let l_len = self.deg() + 1;
-        let r_len = rhs.deg() + 1;
-        let mut out = vec![F::ZERO; l_len + r_len - 1];
-        for i in 0..l_len {
-            let tmp: Vec<F> = rhs
-                .coeff
-                .iter()
-                .zip(out.iter().skip(i))
-                .map(|(&a, out_i)| a * self.coeff[i] + out_i)
-                .collect();
-            out.splice(i..i + r_len, tmp);
-        }
-        Poly { coeff: out }
-    }
-}
-
 impl<'b, F: PrimeField> Mul<&'b Poly<F>> for Poly<F> {
     type Output = Poly<F>;
 
@@ -365,15 +378,6 @@ impl<F: PrimeField> Mul<Poly<F>> for Poly<F> {
 
     fn mul(self, rhs: Poly<F>) -> Poly<F> {
         &self * &rhs
-    }
-}
-
-impl<'a, F: PrimeField> Neg for &'a Poly<F> {
-    type Output = Poly<F>;
-
-    fn neg(self) -> Poly<F> {
-        let out: Vec<F> = self.coeff.iter().map(|&a| -a).collect();
-        Poly { coeff: out }
     }
 }
 

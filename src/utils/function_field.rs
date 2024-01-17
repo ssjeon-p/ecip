@@ -24,7 +24,7 @@ impl<C: CurveAffine> FunctionField<C> {
 
     // line represented by y=\lambda x + \mu
     pub fn line(lambda: C::Base, mu: C::Base) -> Self {
-        let a = Poly::from_vec(vec![mu, lambda]);
+        let a = Poly { coeff: vec![mu, lambda] };
         let b = Poly::constant(C::Base::ONE);
         Self { a, b }
     }
@@ -60,7 +60,7 @@ impl<C: CurveAffine> FunctionField<C> {
         }
     }
 
-    // this actually ouputs -(pt1+pt2).
+    // this actually ouputs -(pt1+pt2). but efficient with knowledge of lambda and mu
     pub fn another_zero_of_line(lambda: C::Base, mu: C::Base, pt1: C, pt2: C) -> C {
         let x1 = *pt1.coordinates().unwrap().x();
         let x2 = *pt2.coordinates().unwrap().x();
@@ -94,7 +94,6 @@ impl<C: CurveAffine> FunctionField<C> {
         }
     }
 
-    // deg a, deg b, deg f
     fn deg_display(&self) -> (usize, usize, usize) {
         (self.a.deg(), self.b.deg(), self.deg())
     }
@@ -133,10 +132,13 @@ impl<C: CurveAffine> FunctionField<C> {
     pub fn interpolate_mumford_distinct(points: &[C]) -> Self {
         let (u, v) = Self::mumford_repn_distinct(points);
         let (_, (c, mut b)) = Poly::half_gcd(&u, &v);
-        let a = u * c + v * &b;
+        let mut a = u * c + v * &b;
+        a.clear();
+
+        // this is for circuit. to make a.len == b.len. todo: remove this
         b.coeff
             .extend_from_slice(&[C::Base::ZERO, C::Base::ZERO, C::Base::ZERO]);
-        let out = Self { a: a.clear(), b };
+        let out = Self { a, b };
 
         assert_eq!(out.deg(), points.len(), "points are not distinct");
         out
@@ -266,25 +268,6 @@ impl<C: CurveAffine> FunctionField<C> {
 
         let mut divisor_witness: Vec<FunctionField<C>> = vec![];
 
-        // for j in 0..l - 1 {
-        //     to_interpolate[j].push(q[j]);
-        //     to_interpolate[j].push(q[j + 1]); // this point should have multiplicity 3
-
-        //     let tmp = (q[j + 1] + q[j + 1]).into();
-        //     to_interpolate[j].push(tmp);
-        //     let mut f = Self::interpolate_mumford_distinct(&to_interpolate[j]);
-
-        //     // multiply tangent line at q[j+1] to make it multiplicity 3
-        //     let (lambda, mu) = Self::tangent_line(q[j + 1]);
-        //     f = f.mul_with_line(lambda, mu);
-
-        //     // divide unnecessary tmp
-        //     let line = Poly::vertical_line(*tmp.coordinates().unwrap().x());
-        //     f.a = Poly::euclidean(&f.a, &line).0;
-        //     f.b = Poly::euclidean(&f.b, &line).0;
-        //     divisor_witness.push(f);
-        // }
-
         for j in 0..l - 1 {
             to_interpolate[j].push(q[j]);
             to_interpolate[j].push(q[j + 1]);
@@ -301,7 +284,6 @@ impl<C: CurveAffine> FunctionField<C> {
     }
 }
 
-#[allow(dead_code)]
 // for test, random points P_i such that \sum P_i = O
 pub fn random_points_sum_zero(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Affine> {
     let mut points = random_points(rng, n - 1);
@@ -314,7 +296,6 @@ pub fn random_points_sum_zero(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Aff
     points
 }
 
-#[allow(dead_code)]
 // for test, random points P_i
 pub fn random_points(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Affine> {
     let mut points: Vec<Secp256k1Affine> = vec![];

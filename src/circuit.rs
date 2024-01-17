@@ -166,7 +166,7 @@ impl<C: CurveAffine> MSMChip<C> {
         layouter.assign_region(
             || "ec points and trace",
             |mut region| {
-                let mut prev_tr = region.assign_advice(
+                let mut trace = region.assign_advice(
                     || "init trace",
                     self.config.trace,
                     0,
@@ -188,14 +188,14 @@ impl<C: CurveAffine> MSMChip<C> {
                         || Value::known(*pt.y()),
                     )?;
                     let tr = trace_higher(points[offset], &self.config.clg);
-                    prev_tr = region.assign_advice(
+                    trace = region.assign_advice(
                         || "trace",
                         self.config.trace,
                         offset + 1,
-                        || Value::known(tr) + prev_tr.value().copied(),
+                        || Value::known(tr) + trace.value().copied(),
                     )?;
                 }
-                Ok(prev_tr)
+                Ok(trace)
             },
         )
     }

@@ -1,7 +1,6 @@
 use crate::utils::function_field::*;
 use halo2_proofs::{arithmetic::Field, halo2curves::CurveAffine};
 
-#[allow(dead_code)]
 #[derive(Debug, Default, Clone)]
 pub struct MSMChallenge<C: CurveAffine> {
     pub mu: C::Base,
@@ -49,7 +48,7 @@ impl<C: CurveAffine> MSMChallenge<C> {
     }
 
     // evaluate dx/dz at point
-    fn dx_dz_simple(pt: C, lambda: C::Base) -> C::Base {
+    pub fn dx_dz_simple(pt: C, lambda: C::Base) -> C::Base {
         let (x, y) = Self::to_xy(pt);
         (((x + x + x) * x + C::a()) * (y + y).invert().unwrap() - lambda)
             .invert()
@@ -71,13 +70,11 @@ impl<C: CurveAffine> MSMChallenge<C> {
     }
 }
 
-#[allow(dead_code)]
 pub fn trace_simple<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base {
     let pt = point.coordinates().unwrap();
     (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
 }
 
-#[allow(dead_code)]
 pub fn trace_higher<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base {
     let pt = point.coordinates().unwrap();
     let x0 = *clg.points[0].coordinates().unwrap().x();
