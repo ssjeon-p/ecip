@@ -24,7 +24,9 @@ impl<C: CurveAffine> FunctionField<C> {
 
     // line represented by y=\lambda x + \mu
     pub fn line(lambda: C::Base, mu: C::Base) -> Self {
-        let a = Poly { coeff: vec![mu, lambda] };
+        let a = Poly {
+            coeff: vec![mu, lambda],
+        };
         let b = Poly::constant(C::Base::ONE);
         Self { a, b }
     }
@@ -94,36 +96,28 @@ impl<C: CurveAffine> FunctionField<C> {
         }
     }
 
-    fn deg_display(&self) -> (usize, usize, usize) {
+    pub fn deg_display(&self) -> (usize, usize, usize) {
         (self.a.deg(), self.b.deg(), self.deg())
     }
 
-    // multiply with a line y=\lambda x + \mu
-    // todo: maybe this can be optimized, remove mul with one
     pub fn mul_with_line(&self, lambda: C::Base, mu: C::Base) -> Self {
         let line = Poly::from_vec(vec![mu, lambda]);
-        let defining_curve = Poly::from_vec(vec![C::b(), C::a(), C::Base::ZERO, C::Base::ONE]);
         Self {
-            a: &self.a * &line + &self.b * defining_curve,
+            a: &self.a * &line + &self.b * Poly::from_vec(vec![C::b(), C::a()]) + &self.b.shift(3),
             b: &self.b * line + &self.a,
         }
     }
 
-    // todo: maybe this can be optimized, remove mul with one
     pub fn mul_with_vertical_line(&self, x: C::Base) -> Self {
-        let line = Poly::vertical_line(x);
         Self {
-            a: &self.a * &line,
-            b: &self.b * line,
+            a: self.a.mul_with_linear(-x),
+            b: self.b.mul_with_linear(-x),
         }
     }
-
-    // todo: maybe this can be optimized, remove divide with one
     pub fn divide_by_vertical_line(&self, x: C::Base) -> Self {
-        let line = Poly::vertical_line(x);
         Self {
-            a: Poly::euclidean(&self.a, &line).0,
-            b: Poly::euclidean(&self.b, &line).0,
+            a: self.a.div_by_linear(-x),
+            b: self.b.div_by_linear(-x),
         }
     }
 
@@ -131,13 +125,10 @@ impl<C: CurveAffine> FunctionField<C> {
     // todo: make it into general version.
     pub fn interpolate_mumford_distinct(points: &[C]) -> Self {
         let (u, v) = Self::mumford_repn_distinct(points);
-        let (_, (c, mut b)) = Poly::half_gcd(&u, &v);
+        let (_, (c, b)) = Poly::half_gcd(&u, &v);
         let mut a = u * c + v * &b;
         a.clear();
 
-        // this is for circuit. to make a.len == b.len. todo: remove this
-        b.coeff
-            .extend_from_slice(&[C::Base::ZERO, C::Base::ZERO, C::Base::ZERO]);
         let out = Self { a, b };
 
         assert_eq!(out.deg(), points.len(), "points are not distinct");
@@ -206,6 +197,10 @@ impl<C: CurveAffine> FunctionField<C> {
             }
         }
         assert_eq!(points.len(), f.deg());
+
+        // equalize length for circuit. todo: remove this or move into circuit
+        f.a.coeff.extend_from_slice(&[C::Base::ZERO]);
+        f.b.coeff.extend_from_slice(&[C::Base::ZERO; 3]);
 
         f
     }
@@ -438,7 +433,7 @@ mod test {
     fn test_interpolate_incremental() {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
-        let n = 200;
+        let n = 5000;
         let points = random_points_sum_zero(rng, n);
 
         // interpolate P_i

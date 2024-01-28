@@ -148,6 +148,7 @@ impl<F: PrimeField> Poly<F> {
         a / 2 + a % 2
     }
 
+    // todo: should optimize
     // output (q, r) such that f = q * g +r
     pub fn euclidean(f: &Poly<F>, g: &Poly<F>) -> (Poly<F>, Poly<F>) {
         assert!(g.is_not_zero());
@@ -161,7 +162,6 @@ impl<F: PrimeField> Poly<F> {
             let t = &Self::monomial(r.deg() - d, r.lead_coeff() * g_lead_invert);
             q = q + t;
             r = r - t * g;
-            // todo: efficient?
         }
 
         (q, r)
@@ -205,7 +205,16 @@ impl<F: PrimeField> Poly<F> {
 
     // slice polynomial into f such that input = f*x^m + g
     fn slice(&self, m: usize) -> Self {
-        Self::from_vec(self.coeff[m..].to_vec())
+        Self {
+            coeff: self.coeff[m..].to_vec(),
+        }
+    }
+
+    // multiply with x^m
+    pub fn shift(&self, m: usize) -> Self {
+        let mut out = vec![F::ZERO; m];
+        out.extend(self.coeff.iter());
+        Self { coeff: out }
     }
 
     // delete useless zero terms
@@ -221,6 +230,27 @@ impl<F: PrimeField> Poly<F> {
         let sum = -self.coeff[n - 1] * self.coeff[n].invert().unwrap();
 
         zeros.iter().fold(sum, |acc, next| acc - next)
+    }
+
+    // multiply with (x+a)
+    pub fn mul_with_linear(&self, a: F) -> Self {
+        self * &Poly::constant(a) + self.shift(1)
+    }
+
+    // divide by (x+a)
+    pub fn div_by_linear(&self, a: F) -> Self {
+        if a.is_zero_vartime() {
+            return self.slice(1);
+        }
+
+        let a_inv = a.invert().unwrap();
+        let mut out = vec![self.coeff[0] * a_inv];
+        let n = self.deg();
+        for i in 1..=n - 1 {
+            out.push((self.coeff[i] - out[i - 1]) * a_inv);
+        }
+
+        Self { coeff: out }
     }
 }
 
@@ -306,7 +336,6 @@ impl<'a, F: PrimeField> Neg for &'a Poly<F> {
         Poly { coeff: out }
     }
 }
-
 
 // without references
 impl<'b, F: PrimeField> Add<&'b Poly<F>> for Poly<F> {
