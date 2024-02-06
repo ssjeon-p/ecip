@@ -1,7 +1,7 @@
 use crate::utils::function_field::FunctionField;
 use crate::utils::weil_reciprocity::*;
 use halo2_proofs::circuit::AssignedCell;
-use halo2_proofs::plonk::Expression;
+use halo2_proofs::plonk::{Constraints, Expression};
 use halo2_proofs::poly::Rotation;
 use halo2_proofs::{
     arithmetic::Field,
@@ -11,12 +11,15 @@ use halo2_proofs::{
 };
 use rand::thread_rng;
 
+type ACell<F> = AssignedCell<F, F>;
+
 // todo: enable to use different curve for zkp and ecip
 #[derive(Debug, Clone)]
 pub struct MSMConfig<C: CurveAffine> {
     adv: [Column<Advice>; 4],
 
     s_pt: Selector,
+    s_scalar: Selector,
     s_div: Selector,
     s_div_prime: Selector,
     s_final: Selector,
@@ -36,6 +39,7 @@ impl<C: CurveAffine> MSMConfig<C> {
         ];
 
         let s_pt = meta.selector();
+        let s_scalar = meta.selector();
         let s_div = meta.selector();
         let s_div_prime = meta.selector();
         let s_final = meta.selector();
@@ -46,17 +50,35 @@ impl<C: CurveAffine> MSMConfig<C> {
         let clg = MSMChallenge::from_higher(random_point::<C>());
 
         meta.create_gate("trace", |meta| {
-            // adv = | x(P) | y(P) | trace | . |
-            let [x, y, trace, _] = adv;
+            // adv = | x(P) | y(P) | trace(P) | trace(-P) |
+            let [x, y, trace, trace_neg] = adv;
             let s_pt = meta.query_selector(s_pt);
             let lambda = Expression::Constant(clg.lambda);
             let mu = Expression::Constant(clg.mu);
             let x_one = Expression::Constant(*clg.points[0].coordinates().unwrap().x());
 
-            vec![
-                s_pt * ((trace.cur() - trace.prev()) * (mu + lambda * x.cur() - y.cur()) - x_one
-                    + x.cur()),
-            ]
+            Constraints::with_selector(
+                s_pt,
+                [
+                    trace.cur() * (mu.clone() + lambda.clone() * x.cur() - y.cur()) - x_one.clone()
+                        + x.cur(),
+                    trace_neg.cur() * (mu + lambda * x.cur() + y.cur()) - x_one + x.cur(),
+                ],
+            )
+        });
+
+        meta.create_gate("scalars", |meta| {
+            // adv = | a_i | b_i | tr_acc | . |
+            let [a, b, tr_acc, _] = adv;
+            let s_scalar = meta.query_selector(s_scalar);
+            // todo: for Tr(-Q) -n-1 => -n-2
+            let trace = meta.query_advice(adv[2], Rotation(-n - 2));
+            let trace_neg = meta.query_advice(adv[3], Rotation(-n - 2));
+
+            Constraints::with_selector(
+                s_scalar,
+                [(tr_acc.cur() - tr_acc.prev()) - a.cur() * trace - b.cur() * trace_neg],
+            )
         });
 
         meta.create_gate("ordinal evaluation", |meta| {
@@ -77,7 +99,7 @@ impl<C: CurveAffine> MSMConfig<C> {
             let gate0 = f_0.prev() * x0 + a.cur() - y0 * b.cur() - f_0.cur();
             let gate2 = f_2.prev() * x2 + a.cur() - y2 * b.cur() - f_2.cur();
 
-            vec![s_div.clone() * gate0, s_div * gate2]
+            Constraints::with_selector(s_div, [gate0, gate2])
         });
 
         meta.create_gate("derivative evaluation", |meta| {
@@ -97,40 +119,55 @@ impl<C: CurveAffine> MSMConfig<C> {
             let d0 = Expression::Constant(clg.dx_dy[0]);
             let d2 = Expression::Constant(clg.dx_dy[2]);
 
-            let b_ord = meta.query_advice(b, Rotation(-n / 2 - 1));
+            let b_ord = meta.query_advice(b, Rotation(-n / 2 - 3));
 
             let gate0 = f_0.prev() * x0 + a.cur() - y0 * b.cur() - f_0.cur() - d0 * b_ord.clone();
             let gate2 = f_2.prev() * x2 + a.cur() - y2 * b.cur() - f_2.cur() - d2 * b_ord;
 
-            vec![s_div_prime.clone() * gate0, s_div_prime * gate2]
+            Constraints::with_selector(s_div_prime, [gate0, gate2])
         });
 
         meta.create_gate("final gate", |meta| {
-            let f_0_eval = meta.query_advice(adv[2], Rotation(-n / 2 - 2));
-            let f_2_eval = meta.query_advice(adv[3], Rotation(-n / 2 - 2));
+            // |  |  |    f_0    |    f_2   |
+            // |  |  |     .     |     .    |
+            // |  |  |     .     |     .    |
+            // |  |  |     .     |     .    |
+            // |  |  |    f'_0   |   f'_2   |
+            // |  |  |  f_0 _inv |  f_2_inv |  cur
+            // |  |  |   tr_z    |    .     |
+            // |  |  |  tr_prev  |    .     |
+            // |  |  |  tr_acc   |    .     |
+            let f_0_eval = meta.query_advice(adv[2], Rotation(-n / 2 - 4));
+            let f_2_eval = meta.query_advice(adv[3], Rotation(-n / 2 - 4));
             let f_0_inv = meta.query_advice(adv[2], Rotation::cur());
             let f_2_inv = meta.query_advice(adv[3], Rotation::cur());
             let f_prime_0 = meta.query_advice(adv[2], Rotation::prev());
             let f_prime_2 = meta.query_advice(adv[3], Rotation::prev());
-            let trace = meta.query_advice(adv[2], Rotation::next());
+            let tr_z = meta.query_advice(adv[2], Rotation::next());
+            let tr_prev = meta.query_advice(adv[2], Rotation(2));
+            let tr_acc = meta.query_advice(adv[2], Rotation(3));
             let c2 = clg.higher_c2();
             let c2lam = Expression::Constant(c2 + clg.lambda + clg.lambda);
             let c2 = Expression::Constant(c2);
             let one = Expression::Constant(C::Base::ONE);
             let s_final = meta.query_selector(s_final);
 
-            vec![
-                s_final.clone()
-                    * (trace + f_prime_0 * f_0_inv.clone() * c2lam
-                        - f_prime_2 * f_2_inv.clone() * c2),
-                s_final.clone() * (f_0_eval * f_0_inv - one.clone()),
-                s_final * (f_2_eval * f_2_inv - one),
-            ]
+            Constraints::with_selector(
+                s_final,
+                [
+                    tr_z.clone() + f_prime_0 * f_0_inv.clone() * c2lam
+                        - f_prime_2 * f_2_inv.clone() * c2,
+                    tr_acc + tr_prev.clone() + tr_prev.clone() + tr_prev - tr_z,
+                    f_0_eval * f_0_inv - one.clone(),
+                    f_2_eval * f_2_inv - one,
+                ],
+            )
         });
 
         Self {
             adv,
             s_pt,
+            s_scalar,
             s_div,
             s_div_prime,
             s_final,
@@ -156,67 +193,114 @@ impl<C: CurveAffine> MSMChip<C> {
         &self,
         mut layouter: impl Layouter<C::Base>,
         points: &[C],
-    ) -> Result<AssignedCell<C::Base, C::Base>, Error> {
-        // With invalid witness, circuit should panic at final gate.
-        // let mut points = points.to_vec();
-        // points[0] = random_point();
+        scalars: &[(C::Base, C::Base)],
+    ) -> Result<ACell<C::Base>, Error> {
+        let n = self.n;
         layouter.assign_region(
             || "ec points and trace",
             |mut region| {
-                let mut trace = region.assign_advice(
-                    || "init trace",
-                    self.config.adv[2],
-                    0,
-                    || Value::known(C::Base::ZERO),
-                )?;
+                let mut trace = vec![];
+                let mut trace_neg = vec![];
                 for (offset, pt) in points.iter().enumerate() {
-                    self.config.s_pt.enable(&mut region, offset + 1)?;
+                    self.config.s_pt.enable(&mut region, offset)?;
                     let pt = pt.coordinates().unwrap();
-                    region.assign_advice(
-                        || "x_i",
-                        self.config.adv[0],
-                        offset + 1,
-                        || Value::known(*pt.x()),
-                    )?;
-                    region.assign_advice(
-                        || "y_i",
-                        self.config.adv[1],
-                        offset + 1,
-                        || Value::known(*pt.y()),
-                    )?;
-                    let tr = trace_higher(points[offset], &self.config.clg);
-                    trace = region.assign_advice(
+                    let (x, y) = (Value::known(*pt.x()), Value::known(*pt.y()));
+                    region.assign_advice(|| "x_i", self.config.adv[0], offset, || x)?;
+                    region.assign_advice(|| "y_i", self.config.adv[1], offset, || y)?;
+
+                    trace.push(region.assign_advice(
                         || "trace",
                         self.config.adv[2],
-                        offset + 1,
-                        || Value::known(tr) + trace.value().copied(),
+                        offset,
+                        || Value::known(trace_higher(points[offset], &self.config.clg)),
+                    )?);
+                    trace_neg.push(region.assign_advice(
+                        || "trace",
+                        self.config.adv[3],
+                        offset,
+                        || Value::known(trace_higher(-points[offset], &self.config.clg)),
+                    )?);
+                }
+
+                let mut acc = region.assign_advice(
+                    || "init acc",
+                    self.config.adv[2],
+                    n + 1,
+                    || Value::known(C::Base::ZERO),
+                )?;
+
+                for (offset, i) in (n + 2..=2 * n + 2).zip(0..=n) {
+                    self.config.s_scalar.enable(&mut region, offset)?;
+                    region.assign_advice(
+                        || "scalar a",
+                        self.config.adv[0],
+                        offset,
+                        || Value::known(scalars[i].0),
+                    )?;
+                    region.assign_advice(
+                        || "scalar b",
+                        self.config.adv[1],
+                        offset,
+                        || Value::known(scalars[i].1),
+                    )?;
+                    acc = region.assign_advice(
+                        || "trace_acc",
+                        self.config.adv[2],
+                        offset,
+                        || {
+                            acc.value().copied()
+                                + Value::known(scalars[i].0) * trace[i].value().copied()
+                                + Value::known(scalars[i].1) * trace_neg[i].value().copied()
+                        },
                     )?;
                 }
-                Ok(trace)
+                Ok(acc)
             },
         )
     }
 
-    fn assign_divisor(
+    fn assign_zero(&self, mut layouter: impl Layouter<C::Base>) -> Result<ACell<C::Base>, Error> {
+        layouter.assign_region(
+            || "assign zero",
+            |mut region| {
+                let zero = region.assign_advice(
+                    || "zero",
+                    self.config.adv[2],
+                    0,
+                    || Value::known(C::Base::ZERO),
+                )?;
+                Ok(zero)
+            },
+        )
+    }
+
+    fn assign_divisors(
         &self,
         mut layouter: impl Layouter<C::Base>,
         f: &FunctionField<C>,
-        trace: AssignedCell<C::Base, C::Base>,
-    ) -> Result<(), Error> {
+        tr_prev: ACell<C::Base>,
+        tr_last: Option<ACell<C::Base>>,
+    ) -> Result<ACell<C::Base>, Error> {
         layouter.assign_region(
             || "divisor witness",
             |mut region| {
-                let deg = self.n / 2;
+                // max degree of divisor = (num of points + 4) / 2
+                let deg = self.n / 2 + 2;
+
+                let (x0, y0) = Self::to_xy(self.config.clg.points[0]);
+                let (x2, y2) = Self::to_xy(self.config.clg.points[2]);
+                let (d0, d2) = (self.config.clg.dx_dy[0], self.config.clg.dx_dy[2]);
+
+                let c2 = Value::known(self.config.clg.higher_c2());
+                let lambda = Value::known(self.config.clg.lambda);
+                let c2lam = c2 + lambda + lambda;
+
                 let f_a: Vec<C::Base> = (0..=deg)
                     .map(|i| *f.a.coeff.get(i).unwrap_or(&C::Base::ZERO))
                     .collect();
                 let f_b: Vec<C::Base> = (0..=deg)
                     .map(|i| *f.b.coeff.get(i).unwrap_or(&C::Base::ZERO))
                     .collect();
-
-                let (x0, y0) = Self::to_xy(self.config.clg.points[0]);
-                let (x2, y2) = Self::to_xy(self.config.clg.points[2]);
-                let (d0, d2) = (self.config.clg.dx_dy[0], self.config.clg.dx_dy[2]);
 
                 let mut f_0 = Value::known(C::Base::ZERO);
                 let mut f_2 = Value::known(C::Base::ZERO);
@@ -281,9 +365,33 @@ impl<C: CurveAffine> MSMChip<C> {
                 let f_2_inv = f_2.map(|t| t.invert().unwrap());
                 region.assign_advice(|| "f_0_inv", self.config.adv[2], 2 * deg + 3, || f_0_inv)?;
                 region.assign_advice(|| "f_2_inv", self.config.adv[3], 2 * deg + 3, || f_2_inv)?;
-                trace.copy_advice(|| "trace", &mut region, self.config.adv[2], 2 * deg + 4)?;
+                let tr_z = c2 * f_prime_2 * f_2_inv - c2lam * f_prime_0 * f_0_inv;
+                let tr_z =
+                    region.assign_advice(|| "trace_z", self.config.adv[2], 2 * deg + 4, || tr_z)?;
 
-                Ok(())
+                tr_prev.copy_advice(
+                    || "previous trace",
+                    &mut region,
+                    self.config.adv[2],
+                    2 * deg + 5,
+                )?;
+                let prev = tr_prev.value().copied();
+                let tr_acc = match &tr_last {
+                    None => region.assign_advice(
+                        || "accumulate trace",
+                        self.config.adv[2],
+                        2 * deg + 6,
+                        || -prev - prev - prev + tr_z.value(),
+                    )?,
+                    Some(tr) => region.assign_advice(
+                        || "for the last divisor witness",
+                        self.config.adv[2],
+                        2 * deg + 6,
+                        || tr.value().copied(),
+                    )?,
+                };
+
+                Ok(tr_acc)
             },
         )
     }
@@ -313,7 +421,8 @@ fn random_point<C: CurveAffine>() -> C {
 
 struct MSMCircuit<C: CurveAffine, const N: usize> {
     points: Vec<C>,
-    divisor_witness: FunctionField<C>,
+    scalars: Vec<(C::Base, C::Base)>,
+    divisor_witness: Vec<FunctionField<C>>,
 }
 
 impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
@@ -323,7 +432,8 @@ impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
     fn without_witnesses(&self) -> Self {
         Self {
             points: vec![C::identity(); N],
-            divisor_witness: FunctionField::identity(),
+            scalars: vec![(C::Base::ZERO, C::Base::ZERO); N],
+            divisor_witness: vec![FunctionField::identity()],
         }
     }
 
@@ -337,12 +447,23 @@ impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
         mut layouter: impl Layouter<C::Base>,
     ) -> Result<(), Error> {
         let chip = MSMChip::new(config, N);
-        let tr = chip.assign_points(layouter.namespace(|| "assign points"), &self.points)?;
-        chip.assign_divisor(
-            layouter.namespace(|| "assign divisor"),
-            &self.divisor_witness,
-            tr,
+        let tr = chip.assign_points(
+            layouter.namespace(|| "assign points"),
+            &self.points,
+            &self.scalars,
         )?;
+        let mut tr_acc = chip.assign_zero(layouter.namespace(|| "zero"))?;
+        for f in self.divisor_witness.iter().skip(1).rev() {
+            tr_acc =
+                chip.assign_divisors(layouter.namespace(|| "assign divisor"), f, tr_acc, None)?;
+        }
+        chip.assign_divisors(
+            layouter.namespace(|| "last witness"),
+            &self.divisor_witness[0],
+            tr_acc,
+            Some(tr),
+        )?;
+
         Ok(())
     }
 }
@@ -350,25 +471,49 @@ impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
 #[cfg(test)]
 mod tests {
     use crate::utils::function_field::*;
-    use halo2_proofs::{dev::MockProver, halo2curves::secp256k1::Secp256k1Affine};
+    use halo2_proofs::{
+        dev::MockProver,
+        halo2curves::{secp256k1::Fp, secp256k1::Secp256k1Affine},
+    };
     use std::time::SystemTime;
 
     use super::*;
     #[test]
-    fn test_circuit() {
-        let k = 10;
+    fn test_ecip_circuit() {
+        let l: u32 = 3; // |scalar| < 3^l < q, where F_q is scalar field
+        const N: usize = 100;
+        // we need 2N + l * (N + 10) rows and few more
+        let row = 2 * N + l as usize * (N + 10);
+        let mut k = 0;
+        while (1 << k) < row {
+            k += 1;
+        }
+
+        println!("k = {:?}", k);
+
         let rng = &mut thread_rng();
-        const N: usize = 200;
-        let points = random_points_sum_zero(rng, N);
+        let mut points = random_points(rng, N);
+        let mut scalars_int: Vec<isize> = vec![];
+        let mut scalars: Vec<(Fp, Fp)> = vec![];
+        for i in 0..N {
+            scalars_int.push(rand::random::<isize>() % -(3isize.pow(l)));
+            let (a, b) = split_num(scalars_int[i]);
+            scalars.push((into_field(a), into_field(b)));
+        }
+        scalars.push((Fp::ONE, Fp::ZERO));
         let cur_time = SystemTime::now();
-        let f = FunctionField::interpolate_incremental(&points);
+        let (divisor_witness, prod) = FunctionField::ecip_interpolate(&scalars_int, &points);
+        points.push(-prod);
+        // if you put wrong point, then fail
+        // points[N] = Secp256k1Affine::random(rng);
         println!(
             "prepare divisor witness in {}s",
             cur_time.elapsed().unwrap().as_secs()
         );
         let circuit = MSMCircuit::<Secp256k1Affine, N> {
             points,
-            divisor_witness: f,
+            scalars,
+            divisor_witness,
         };
         let prover = MockProver::run(k, &circuit, vec![]).unwrap();
         prover.assert_satisfied();

@@ -1,5 +1,6 @@
 use crate::utils::poly::*;
 use halo2_proofs::arithmetic::*;
+use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::halo2curves::group::Curve;
 use halo2_proofs::halo2curves::secp256k1::Secp256k1Affine;
 use rand::rngs::ThreadRng;
@@ -198,10 +199,6 @@ impl<C: CurveAffine> FunctionField<C> {
         }
         assert_eq!(points.len(), f.deg());
 
-        // equalize length for circuit. todo: remove this or move into circuit
-        f.a.coeff.extend_from_slice(&[C::Base::ZERO]);
-        f.b.coeff.extend_from_slice(&[C::Base::ZERO; 3]);
-
         f
     }
 
@@ -396,6 +393,14 @@ pub fn split_num(num: isize) -> (isize, isize) {
     (a, b)
 }
 
+pub fn into_field<F: PrimeField>(a: isize) -> F {
+    if a < 0 {
+        -F::from_u128(-a as u128)
+    } else {
+        F::from_u128(a as u128)
+    }
+}
+
 pub fn div_mod(num: isize) -> (isize, isize) {
     let (quot, rem) = (num / -3, num % -3);
     match rem {
@@ -433,7 +438,7 @@ mod test {
     fn test_interpolate_incremental() {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
-        let n = 5000;
+        let n = 2000;
         let points = random_points_sum_zero(rng, n);
 
         // interpolate P_i
@@ -452,7 +457,7 @@ mod test {
     fn compare_interpolate() {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
-        let n = 200;
+        let n = 5000;
         let points = random_points_sum_zero(rng, n);
 
         // interpolate P_i with mumford reprensentation

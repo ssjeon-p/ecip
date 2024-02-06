@@ -1,5 +1,6 @@
 use crate::utils::function_field::*;
 use halo2_proofs::{arithmetic::Field, halo2curves::CurveAffine};
+use num::integer::Roots;
 
 #[derive(Debug, Default, Clone)]
 pub struct MSMChallenge<C: CurveAffine> {
@@ -81,6 +82,65 @@ pub fn trace_higher<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base 
     (x0 - *pt.x()) * (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
 }
 
+// given third root of unity w \in Fq, split scalar = a + w b into short a,b
+// lattice reduction method in https://link.springer.com/chapter/10.1007/3-540-44647-8_11
+pub fn split_cm(scalar: Vec<isize>, l: isize, n: isize) -> Vec<(isize, isize)> {
+    // todo: erase this
+    // assert_eq!(w.cube(), C::Scalar::ONE);
+    // assert_eq!(C::a(), C::Base::ZERO);
+
+    // euclidean algorithm
+    let mut s = vec![1, 0];
+    let mut t = vec![0, 1];
+    let mut r = vec![n, l];
+    let mut v2 = (0, 0);
+    let mut v1 = (0, 0);
+
+    let sqrt_n = n.sqrt();
+
+    for i in 1.. {
+        let quot = r[i - 1] / r[i];
+        r.push(r[i - 1] - quot * r[i]);
+        s.push(s[i - 1] - quot * s[i]);
+        t.push(t[i - 1] - quot * t[i]);
+        if r[i] < sqrt_n {
+            v1 = (r[i], -t[i]);
+            v2 = (r[i - 1], -t[i - 1]);
+            let v3 = (r[i + 1], -t[i + 1]);
+            if norm_sq(v3) < norm_sq(v2) {
+                v2 = v3;
+            }
+            break;
+        }
+    }
+    assert_eq!((v1.0 + l * v1.1) % n, 0);
+    assert_eq!((v2.0 + l * v2.1) % n, 0);
+
+    let det = v1.0 * v2.1 - v1.1 * v2.0;
+
+    let mut out = vec![];
+    for k in scalar.iter() {
+        let b1 = nearest_int(v2.1 * k, det);
+        let b2 = nearest_int(-v1.1 * k, det);
+        out.push((k - b1 * v1.0 - b2 * v2.0, -b1 * v1.1 - b2 * v2.1));
+    }
+
+    out
+}
+
+fn norm_sq(a: (isize, isize)) -> isize {
+    a.0 * a.0 + a.1 * a.1
+}
+
+// nearest interger of a/b
+fn nearest_int(a: isize, b: isize) -> isize {
+    if a % b < b / 2 {
+        a / b
+    } else {
+        a / b + 1
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -125,7 +185,7 @@ mod test {
     #[test]
     fn test_higher_challenge() {
         // divisor witness
-        let n = 200;
+        let n = 5000;
         let rng = &mut thread_rng();
         let points = random_points_sum_zero(rng, n);
         let f = FunctionField::interpolate_mumford_distinct(&points);
@@ -198,7 +258,7 @@ mod test {
     fn test_ecip_higher() {
         let n = 200;
         let rng = &mut thread_rng();
-        let points = random_points(rng, n);
+        let points = random_points_sum_zero(rng, n);
 
         let mut scalars = vec![];
         for _ in 0..n {
@@ -227,8 +287,8 @@ mod test {
         let mut trace = trace_higher(-prod, &clg);
         for i in 0..n {
             let (a, b) = split_num(scalars[i]);
-            trace += field_scalar_mul(a, trace_higher(points[i], &clg));
-            trace += field_scalar_mul(b, trace_higher(-points[i], &clg));
+            trace += into_field::<Fp>(a) * trace_higher(points[i], &clg);
+            trace += into_field::<Fp>(b) * trace_higher(-points[i], &clg);
         }
 
         assert_eq!(lhs, trace);
