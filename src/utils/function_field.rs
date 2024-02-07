@@ -1,4 +1,5 @@
 use crate::utils::poly::*;
+use halo2_common::arithmetic::lagrange_interpolate;
 use halo2_proofs::arithmetic::*;
 use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::halo2curves::group::Curve;
@@ -164,6 +165,7 @@ impl<C: CurveAffine> FunctionField<C> {
         todo!()
     }
 
+    // todo: parallelize
     // given points, find interpolation using incremental method.
     pub fn interpolate_incremental(points: &[C]) -> Self {
         let mut to_interpolate = points.to_vec();
@@ -202,6 +204,7 @@ impl<C: CurveAffine> FunctionField<C> {
         f
     }
 
+    #[cfg(test)]
     // only for test. this clones derivates for each time.
     pub fn evaluate_derivative(&self, point: C) -> C::Base {
         let coord = point.coordinates().unwrap();
@@ -215,14 +218,15 @@ impl<C: CurveAffine> FunctionField<C> {
         a_prime - tmp * self.b.evaluate(x) - y * b_prime
     }
 
-    // for test
-    fn check_interpolate(&self, points: &[C]) {
+    #[cfg(test)]
+    pub fn check_interpolate(&self, points: &[C]) {
         assert_eq!(self.deg(), points.len());
         for pt in points.iter() {
             assert!(self.is_zero_at(*pt));
         }
     }
 
+    // todo: scalar should be in Fq
     // second output: the inner product
     pub fn ecip_interpolate(scalars: &[isize], points: &[C]) -> (Vec<FunctionField<C>>, C) {
         let n = points.len();

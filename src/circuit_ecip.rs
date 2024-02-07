@@ -1,7 +1,7 @@
 use crate::utils::function_field::FunctionField;
 use crate::utils::weil_reciprocity::*;
 use halo2_proofs::circuit::AssignedCell;
-use halo2_proofs::plonk::{Constraints, Expression};
+use halo2_proofs::plonk::Expression;
 use halo2_proofs::poly::Rotation;
 use halo2_proofs::{
     arithmetic::Field,
@@ -57,14 +57,13 @@ impl<C: CurveAffine> MSMConfig<C> {
             let mu = Expression::Constant(clg.mu);
             let x_one = Expression::Constant(*clg.points[0].coordinates().unwrap().x());
 
-            Constraints::with_selector(
-                s_pt,
-                [
-                    trace.cur() * (mu.clone() + lambda.clone() * x.cur() - y.cur()) - x_one.clone()
-                        + x.cur(),
-                    trace_neg.cur() * (mu + lambda * x.cur() + y.cur()) - x_one + x.cur(),
-                ],
-            )
+            vec![
+                s_pt.clone()
+                    * (trace.cur() * (mu.clone() + lambda.clone() * x.cur() - y.cur())
+                        - x_one.clone()
+                        + x.cur()),
+                s_pt * (trace_neg.cur() * (mu + lambda * x.cur() + y.cur()) - x_one + x.cur()),
+            ]
         });
 
         meta.create_gate("scalars", |meta| {
@@ -75,10 +74,9 @@ impl<C: CurveAffine> MSMConfig<C> {
             let trace = meta.query_advice(adv[2], Rotation(-n - 2));
             let trace_neg = meta.query_advice(adv[3], Rotation(-n - 2));
 
-            Constraints::with_selector(
-                s_scalar,
-                [(tr_acc.cur() - tr_acc.prev()) - a.cur() * trace - b.cur() * trace_neg],
-            )
+            vec![
+                s_scalar * ((tr_acc.cur() - tr_acc.prev()) - a.cur() * trace - b.cur() * trace_neg),
+            ]
         });
 
         meta.create_gate("ordinal evaluation", |meta| {
@@ -99,7 +97,7 @@ impl<C: CurveAffine> MSMConfig<C> {
             let gate0 = f_0.prev() * x0 + a.cur() - y0 * b.cur() - f_0.cur();
             let gate2 = f_2.prev() * x2 + a.cur() - y2 * b.cur() - f_2.cur();
 
-            Constraints::with_selector(s_div, [gate0, gate2])
+            vec![s_div.clone() * gate0, s_div * gate2]
         });
 
         meta.create_gate("derivative evaluation", |meta| {
@@ -124,7 +122,7 @@ impl<C: CurveAffine> MSMConfig<C> {
             let gate0 = f_0.prev() * x0 + a.cur() - y0 * b.cur() - f_0.cur() - d0 * b_ord.clone();
             let gate2 = f_2.prev() * x2 + a.cur() - y2 * b.cur() - f_2.cur() - d2 * b_ord;
 
-            Constraints::with_selector(s_div_prime, [gate0, gate2])
+            vec![s_div_prime.clone() * gate0, s_div_prime * gate2]
         });
 
         meta.create_gate("final gate", |meta| {
@@ -152,16 +150,14 @@ impl<C: CurveAffine> MSMConfig<C> {
             let one = Expression::Constant(C::Base::ONE);
             let s_final = meta.query_selector(s_final);
 
-            Constraints::with_selector(
-                s_final,
-                [
-                    tr_z.clone() + f_prime_0 * f_0_inv.clone() * c2lam
-                        - f_prime_2 * f_2_inv.clone() * c2,
-                    tr_acc + tr_prev.clone() + tr_prev.clone() + tr_prev - tr_z,
-                    f_0_eval * f_0_inv - one.clone(),
-                    f_2_eval * f_2_inv - one,
-                ],
-            )
+            vec![
+                s_final.clone()
+                    * (tr_z.clone() + f_prime_0 * f_0_inv.clone() * c2lam
+                        - f_prime_2 * f_2_inv.clone() * c2),
+                s_final.clone() * (tr_acc + tr_prev.clone() + tr_prev.clone() + tr_prev - tr_z),
+                s_final.clone() * (f_0_eval * f_0_inv - one.clone()),
+                s_final * (f_2_eval * f_2_inv - one),
+            ]
         });
 
         Self {
