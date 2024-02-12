@@ -2,6 +2,14 @@
 
 Implementation of [Liam Eagen](https://eprint.iacr.org/2022/596)'s elliptic curve inner product argument.
 
+# Test
+
+To test the circuit,
+```
+cargo test test_ecip_circuit --release -- --nocapture
+```
+
+
 # Description
 
 * function_field.rs

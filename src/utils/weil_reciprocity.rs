@@ -144,7 +144,6 @@ fn nearest_int(a: isize, b: isize) -> isize {
 #[cfg(test)]
 mod test {
     use super::*;
-    use halo2_proofs::halo2curves::secp256k1::{Fp, Secp256k1Affine};
     use rand::thread_rng;
 
     #[test]
@@ -153,30 +152,30 @@ mod test {
         let n = 200;
         let rng = &mut thread_rng();
         let points = random_points_sum_zero(rng, n);
-        let f = FunctionField::interpolate_incremental(&points);
+        let f = FunctionField::interpolate_lev(&points);
 
         // random challenge
         let rng = &mut thread_rng();
-        let pt0 = Secp256k1Affine::random(rng.clone());
-        let pt1 = Secp256k1Affine::random(rng.clone());
+        let pt0 = G1Affine::random(rng.clone());
+        let pt1 = G1Affine::random(rng.clone());
         let clg = MSMChallenge::from_simple((pt0, pt1));
 
         // equation (1) in (https://eprint.iacr.org/2022/596)
-        let dx_dz: Vec<Fp> = clg
+        let dx_dz: Vec<Fr> = clg
             .points
             .into_iter()
             .map(|pt| MSMChallenge::dx_dz_simple(pt, clg.lambda))
             .collect();
 
-        let d_prime_d: Vec<Fp> = clg
+        let d_prime_d: Vec<Fr> = clg
             .points
             .into_iter()
             .map(|pt| f.evaluate_derivative(pt) * f.evaluate(pt).invert().unwrap())
             .collect();
 
         let lhs = field_inner_product(&dx_dz, &d_prime_d);
-        let rhs = points.iter().fold(Fp::ZERO, |acc, &next| {
-            acc + trace_simple::<Secp256k1Affine>(next, &clg)
+        let rhs = points.iter().fold(Fr::ZERO, |acc, &next| {
+            acc + trace_simple::<G1Affine>(next, &clg)
         });
 
         assert_eq!(lhs, rhs);
@@ -188,11 +187,11 @@ mod test {
         let n = 5000;
         let rng = &mut thread_rng();
         let points = random_points_sum_zero(rng, n);
-        let f = FunctionField::interpolate_mumford_distinct(&points);
+        let f = FunctionField::interpolate_lev(&points);
 
         // random challenge
         let rng = &mut thread_rng();
-        let pt = Secp256k1Affine::random(rng);
+        let pt = G1Affine::random(rng);
         let clg = MSMChallenge::from_higher(pt);
 
         // equation (2) in (https://eprint.iacr.org/2022/596)
@@ -202,8 +201,8 @@ mod test {
         let d_prime_d_2 =
             f.evaluate_derivative(clg.points[2]) * f.evaluate(clg.points[2]).invert().unwrap();
         let rhs = c2 * d_prime_d_2 - (c2 + clg.lambda + clg.lambda) * d_prime_d_0;
-        let lhs = points.iter().fold(Fp::ZERO, |acc, &next| {
-            acc + trace_higher::<Secp256k1Affine>(next, &clg)
+        let lhs = points.iter().fold(Fr::ZERO, |acc, &next| {
+            acc + trace_higher::<G1Affine>(next, &clg)
         });
 
         assert_eq!(lhs, rhs);
@@ -220,23 +219,23 @@ mod test {
             scalars.push(rand::random::<isize>() % -10000);
         }
 
-        let pt1 = Secp256k1Affine::random(rng.clone());
-        let pt2 = Secp256k1Affine::random(rng.clone());
+        let pt1 = G1Affine::random(rng.clone());
+        let pt2 = G1Affine::random(rng.clone());
         let clg = MSMChallenge::from_simple((pt1, pt2));
 
-        let mut lhs = Fp::ZERO;
-        let mut digit = Fp::ONE;
-        let (divisor_witness, prod) = FunctionField::ecip_interpolate(&scalars, &points);
+        let mut lhs = Fr::ZERO;
+        let mut digit = Fr::ONE;
+        let (divisor_witness, prod) = FunctionField::ecip_interpolate_lev(&scalars, &points);
         assert_eq!(prod, curve_inner_product(&scalars, &points));
 
-        let dx_dz: Vec<Fp> = clg
+        let dx_dz: Vec<Fr> = clg
             .points
             .into_iter()
             .map(|pt| MSMChallenge::dx_dz_simple(pt, clg.lambda))
             .collect();
 
         for f in divisor_witness.iter() {
-            let d_prime_d: Vec<Fp> = clg
+            let d_prime_d: Vec<Fr> = clg
                 .points
                 .into_iter()
                 .map(|pt| f.evaluate_derivative(pt) * f.evaluate(pt).invert().unwrap())
@@ -256,7 +255,7 @@ mod test {
 
     #[test]
     fn test_ecip_higher() {
-        let n = 200;
+        let n = 10000;
         let rng = &mut thread_rng();
         let points = random_points_sum_zero(rng, n);
 
@@ -265,15 +264,15 @@ mod test {
             scalars.push(rand::random::<isize>() % -10000);
         }
 
-        let pt = Secp256k1Affine::random(rng.clone());
+        let pt = G1Affine::random(rng.clone());
         let clg = MSMChallenge::from_higher(pt);
         let c2 = clg.higher_c2();
         let c2_lam = c2 + clg.lambda + clg.lambda;
 
         // equation (3) in (https://eprint.iacr.org/2022/596)
-        let mut lhs = Fp::ZERO;
-        let mut digit = Fp::ONE;
-        let (divisor_witness, prod) = FunctionField::ecip_interpolate(&scalars, &points);
+        let mut lhs = Fr::ZERO;
+        let mut digit = Fr::ONE;
+        let (divisor_witness, prod) = FunctionField::ecip_interpolate_lev(&scalars, &points);
         assert_eq!(prod, curve_inner_product(&scalars, &points));
         for f in divisor_witness.iter() {
             let d_prime_d_0 =
@@ -287,8 +286,8 @@ mod test {
         let mut trace = trace_higher(-prod, &clg);
         for i in 0..n {
             let (a, b) = split_num(scalars[i]);
-            trace += into_field::<Fp>(a) * trace_higher(points[i], &clg);
-            trace += into_field::<Fp>(b) * trace_higher(-points[i], &clg);
+            trace += into_field::<Fr>(a) * trace_higher(points[i], &clg);
+            trace += into_field::<Fr>(b) * trace_higher(-points[i], &clg);
         }
 
         assert_eq!(lhs, trace);

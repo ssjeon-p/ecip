@@ -1,45 +1,56 @@
 use crate::utils::poly::*;
 use halo2_common::arithmetic::lagrange_interpolate;
+use halo2_liam_eagen_msm::regular_functions_utils::Grumpkin;
+use halo2_liam_eagen_msm::regular_functions_utils::*;
 use halo2_proofs::arithmetic::*;
 use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::halo2curves::group::Curve;
-use halo2_proofs::halo2curves::secp256k1::Secp256k1Affine;
+use halo2_proofs::halo2curves::CurveExt;
 use rand::rngs::ThreadRng;
-use std::cmp::max;
+use std::marker::PhantomData;
 use std::vec;
+
+pub type G1Affine = <Grumpkin as CurveExt>::AffineExt;
+pub type Fr = <G1Affine as CurveAffine>::Base;
 
 #[derive(Clone)]
 // function field element represented by a(x)-yb(x), how about Lagrange?
-pub struct FunctionField<C: CurveAffine> {
-    pub a: Poly<C::Base>,
-    pub b: Poly<C::Base>,
+pub struct FunctionField<F: PrimeField, C: CurveAffine<Base = F>> {
+    pub a: Poly<F>,
+    pub b: Poly<F>,
+    _marker: PhantomData<C>,
 }
 
 #[allow(dead_code)]
-impl<C: CurveAffine> FunctionField<C> {
+impl<F: PrimeField, C: CurveAffine<Base = F>> FunctionField<F, C> {
     pub fn identity() -> Self {
         Self {
-            a: Poly::<C::Base>::one(),
-            b: Poly::<C::Base>::zero(),
+            a: Poly::<F>::one(),
+            b: Poly::<F>::zero(),
+            _marker: PhantomData,
         }
     }
 
     // line represented by y=\lambda x + \mu
-    pub fn line(lambda: C::Base, mu: C::Base) -> Self {
+    pub fn line(lambda: F, mu: F) -> Self {
         let a = Poly {
             coeff: vec![mu, lambda],
         };
-        let b = Poly::constant(C::Base::ONE);
-        Self { a, b }
+        let b = Poly::constant(F::ONE);
+        Self {
+            a,
+            b,
+            _marker: PhantomData,
+        }
     }
 
-    fn to_xy(pt: C) -> (C::Base, C::Base) {
+    fn to_xy(pt: C) -> (F, F) {
         let coord = pt.coordinates().unwrap();
         (*coord.x(), *coord.y())
     }
 
     // output (lambda, mu) such that y=\lambda x + \mu is the tangent line at the point
-    pub fn tangent_line(pt: C) -> (C::Base, C::Base) {
+    pub fn tangent_line(pt: C) -> (F, F) {
         let (x, y) = Self::to_xy(pt);
         let lambda = ((x + x + x) * x + C::a()) * (y + y).invert().unwrap();
         // this fails if y(P) = 0
@@ -48,7 +59,7 @@ impl<C: CurveAffine> FunctionField<C> {
     }
 
     // output (lambda, mu) such that y=\lambda x + \mu is the secant line at two points
-    pub fn secant_line(pt1: C, pt2: C) -> Option<(C::Base, C::Base)> {
+    pub fn secant_line(pt1: C, pt2: C) -> Option<(F, F)> {
         let (x0, y0) = Self::to_xy(pt1);
         let (x1, y1) = Self::to_xy(pt2);
         if x0 == x1 {
@@ -65,7 +76,7 @@ impl<C: CurveAffine> FunctionField<C> {
     }
 
     // this actually ouputs -(pt1+pt2). but efficient with knowledge of lambda and mu
-    pub fn another_zero_of_line(lambda: C::Base, mu: C::Base, pt1: C, pt2: C) -> C {
+    pub fn another_zero_of_line(lambda: F, mu: F, pt1: C, pt2: C) -> C {
         let x1 = *pt1.coordinates().unwrap().x();
         let x2 = *pt2.coordinates().unwrap().x();
         let x3 = lambda.square() - x1 - x2;
@@ -73,7 +84,7 @@ impl<C: CurveAffine> FunctionField<C> {
         CurveAffine::from_xy(x3, y3).unwrap()
     }
 
-    pub fn evaluate(&self, point: C) -> C::Base {
+    pub fn evaluate(&self, point: C) -> F {
         let coord = point.coordinates().unwrap();
         let x = *coord.x();
         let y = *coord.y();
@@ -82,7 +93,7 @@ impl<C: CurveAffine> FunctionField<C> {
     }
 
     pub fn is_zero_at(&self, point: C) -> bool {
-        self.evaluate(point) == C::Base::ZERO
+        self.evaluate(point) == F::ZERO
     }
 
     // degree of function field (equal to the degree of O, point at infinity)
@@ -94,7 +105,7 @@ impl<C: CurveAffine> FunctionField<C> {
         } else if self.b.is_zero() {
             a
         } else {
-            max(a, b)
+            std::cmp::max(a, b)
         }
     }
 
@@ -102,24 +113,27 @@ impl<C: CurveAffine> FunctionField<C> {
         (self.a.deg(), self.b.deg(), self.deg())
     }
 
-    pub fn mul_with_line(&self, lambda: C::Base, mu: C::Base) -> Self {
+    pub fn mul_with_line(&self, lambda: F, mu: F) -> Self {
         let line = Poly::from_vec(vec![mu, lambda]);
         Self {
             a: &self.a * &line + &self.b * Poly::from_vec(vec![C::b(), C::a()]) + &self.b.shift(3),
             b: &self.b * line + &self.a,
+            _marker: PhantomData,
         }
     }
 
-    pub fn mul_with_vertical_line(&self, x: C::Base) -> Self {
+    pub fn mul_with_vertical_line(&self, x: F) -> Self {
         Self {
             a: self.a.mul_with_linear(-x),
             b: self.b.mul_with_linear(-x),
+            _marker: PhantomData,
         }
     }
-    pub fn divide_by_vertical_line(&self, x: C::Base) -> Self {
+    pub fn divide_by_vertical_line(&self, x: F) -> Self {
         Self {
             a: self.a.div_by_linear(-x),
             b: self.b.div_by_linear(-x),
+            _marker: PhantomData,
         }
     }
 
@@ -131,15 +145,19 @@ impl<C: CurveAffine> FunctionField<C> {
         let mut a = u * c + v * &b;
         a.clear();
 
-        let out = Self { a, b };
+        let out = Self {
+            a,
+            b,
+            _marker: PhantomData,
+        };
 
         assert_eq!(out.deg(), points.len(), "points are not distinct");
         out
     }
 
     // given semi-reduced "distinct" points, find mumford representation.
-    fn mumford_repn_distinct(points: &[C]) -> (Poly<C::Base>, Poly<C::Base>) {
-        let (px, py): (Vec<C::Base>, Vec<C::Base>) = points
+    fn mumford_repn_distinct(points: &[C]) -> (Poly<F>, Poly<F>) {
+        let (px, py): (Vec<F>, Vec<F>) = points
             .iter()
             .map(|&p| {
                 let coord = p.coordinates().unwrap();
@@ -150,7 +168,7 @@ impl<C: CurveAffine> FunctionField<C> {
         let v = lagrange_interpolate(&px, &py);
 
         let u = px.iter().fold(Poly::one(), |acc, &next| {
-            acc * Poly::from_vec(vec![-next, C::Base::ONE])
+            acc * Poly::from_vec(vec![-next, F::ONE])
         });
 
         (u, Poly::from_vec(v))
@@ -161,7 +179,7 @@ impl<C: CurveAffine> FunctionField<C> {
         todo!()
     }
     // given points with one repetition on the last point, find mumford representation.
-    fn mumford_repn(_points: &[C]) -> (Poly<C::Base>, Poly<C::Base>) {
+    fn mumford_repn(_points: &[C]) -> (Poly<F>, Poly<F>) {
         todo!()
     }
 
@@ -206,7 +224,7 @@ impl<C: CurveAffine> FunctionField<C> {
 
     #[cfg(test)]
     // only for test. this clones derivates for each time.
-    pub fn evaluate_derivative(&self, point: C) -> C::Base {
+    pub fn evaluate_derivative(&self, point: C) -> F {
         let coord = point.coordinates().unwrap();
         let (x, y) = (*coord.x(), *coord.y());
 
@@ -228,7 +246,7 @@ impl<C: CurveAffine> FunctionField<C> {
 
     // todo: scalar should be in Fq
     // second output: the inner product
-    pub fn ecip_interpolate(scalars: &[isize], points: &[C]) -> (Vec<FunctionField<C>>, C) {
+    pub fn ecip_interpolate(scalars: &[isize], points: &[C]) -> (Vec<FunctionField<F, C>>, C) {
         let n = points.len();
         assert_eq!(n, scalars.len());
 
@@ -262,7 +280,7 @@ impl<C: CurveAffine> FunctionField<C> {
             q[j] = (-(q[j + 1] + q[j + 1] + q[j + 1]) + q[j]).into();
         }
 
-        let mut divisor_witness: Vec<FunctionField<C>> = vec![];
+        let mut divisor_witness: Vec<FunctionField<F, C>> = vec![];
 
         for j in 0..l - 1 {
             to_interpolate[j].push(q[j]);
@@ -280,8 +298,81 @@ impl<C: CurveAffine> FunctionField<C> {
     }
 }
 
+impl<Cx: CurveExt, C: CurveAffine<CurveExt = Cx, Base = Cx::Base>> FunctionField<C::Base, C>
+where
+    Cx::Base: FftPrecomp,
+{
+    pub fn interpolate_lev(points: &[C]) -> Self {
+        let points_ext: Vec<C::CurveExt> = points.iter().map(|pt| pt.to_curve()).collect();
+        let f = compute_divisor_witness(points_ext);
+        Self {
+            a: Poly::from_vec(f.a.poly),
+            b: -Poly::from_vec(f.b.poly),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn ecip_interpolate_lev(
+        scalars: &[isize],
+        points: &[C],
+    ) -> (Vec<FunctionField<C::Base, C>>, C) {
+        let n = points.len();
+        assert_eq!(n, scalars.len());
+
+        let mut exponent: Vec<Vec<isize>> = vec![];
+        for scalar in scalars.iter() {
+            exponent.push(minus_three_adic(*scalar));
+        }
+
+        let l = exponent
+            .iter()
+            .map(|a| a.len())
+            .max_by(|x, y| x.cmp(y))
+            .unwrap();
+        let mut q: Vec<C> = vec![C::identity(); l];
+        let mut to_interpolate: Vec<Vec<C>> = vec![vec![]; l];
+        for j in 0..l {
+            for i in 0..n {
+                if let Some(exp) = exponent[i].get(j) {
+                    match exp {
+                        -1 => {
+                            q[j] = (q[j] + points[i]).into();
+                            to_interpolate[j].push(-points[i]);
+                        }
+                        1 => {
+                            q[j] = (q[j] - points[i]).into();
+                            to_interpolate[j].push(points[i]);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        for j in (0..l - 1).rev() {
+            q[j] = (-(q[j + 1] + q[j + 1] + q[j + 1].to_curve()) + q[j].to_curve()).into();
+        }
+
+        let mut divisor_witness: Vec<FunctionField<C::Base, C>> = vec![];
+
+        for j in 0..l - 1 {
+            to_interpolate[j].push(q[j]);
+            to_interpolate[j].push(q[j + 1]);
+            to_interpolate[j].push(q[j + 1]);
+            to_interpolate[j].push(q[j + 1]);
+            let f = Self::interpolate_lev(&to_interpolate[j]);
+            divisor_witness.push(f);
+        }
+
+        to_interpolate[l - 1].push(q[l - 1]);
+        divisor_witness.push(Self::interpolate_lev(&to_interpolate[l - 1]));
+
+        (divisor_witness, -q[0])
+    }
+}
+
 // for test, random points P_i such that \sum P_i = O
-pub fn random_points_sum_zero(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Affine> {
+pub fn random_points_sum_zero(rng: &mut ThreadRng, n: usize) -> Vec<G1Affine> {
     let mut points = random_points(rng, n - 1);
     let sum = points
         .iter()
@@ -293,10 +384,10 @@ pub fn random_points_sum_zero(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Aff
 }
 
 // for test, random points P_i
-pub fn random_points(rng: &mut ThreadRng, n: usize) -> Vec<Secp256k1Affine> {
-    let mut points: Vec<Secp256k1Affine> = vec![];
+pub fn random_points(rng: &mut ThreadRng, n: usize) -> Vec<G1Affine> {
+    let mut points: Vec<G1Affine> = vec![];
     for _ in 0..n {
-        points.push(Secp256k1Affine::random(rng.clone()));
+        points.push(G1Affine::random(rng.clone()));
     }
     points
 }
@@ -433,7 +524,7 @@ mod test {
         println!(
             "{} points mumford interpolate in {}s",
             n,
-            cur_time.elapsed().unwrap().as_secs()
+            cur_time.elapsed().unwrap().as_millis()
         );
         f.check_interpolate(&points);
     }
@@ -442,7 +533,7 @@ mod test {
     fn test_interpolate_incremental() {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
-        let n = 2000;
+        let n = 3000;
         let points = random_points_sum_zero(rng, n);
 
         // interpolate P_i
@@ -451,7 +542,25 @@ mod test {
         println!(
             "{} points incremental interpolate in {}s",
             n,
-            cur_time.elapsed().unwrap().as_secs()
+            cur_time.elapsed().unwrap().as_millis()
+        );
+        f.check_interpolate(&points);
+    }
+
+    #[test]
+    fn test_interpolate_lev() {
+        // generate P_i such that \sum P_i = O.
+        let rng = &mut thread_rng();
+        let n = 10000;
+        let points = random_points_sum_zero(rng, n);
+
+        // interpolate P_i
+        let cur_time = SystemTime::now();
+        let f = FunctionField::interpolate_lev(&points);
+        println!(
+            "{} points incremental interpolate in {}ms",
+            n,
+            cur_time.elapsed().unwrap().as_millis()
         );
         f.check_interpolate(&points);
     }
@@ -470,7 +579,7 @@ mod test {
         println!(
             "{} points mumford interpolate in {}s",
             n,
-            cur_time.elapsed().unwrap().as_secs()
+            cur_time.elapsed().unwrap().as_millis()
         );
         for i in 0..points.len() {
             assert!(f.is_zero_at(points[i]));
@@ -482,7 +591,7 @@ mod test {
         println!(
             "{} points incremental interpolate in {}s",
             n,
-            cur_time.elapsed().unwrap().as_secs()
+            cur_time.elapsed().unwrap().as_millis()
         );
         f.check_interpolate(&points);
     }
@@ -503,7 +612,7 @@ mod test {
 
         let cur_time = SystemTime::now();
         let f = FunctionField::interpolate_incremental(&points);
-        println!("interpolate in {}s", cur_time.elapsed().unwrap().as_secs());
+        println!("interpolate in {}s", cur_time.elapsed().unwrap().as_millis());
         f.check_interpolate(&points);
     }
 }

@@ -200,7 +200,7 @@ impl<C: CurveAffine> MSMChip<C> {
     fn assign_divisor(
         &self,
         mut layouter: impl Layouter<C::Base>,
-        f: &FunctionField<C>,
+        f: &FunctionField<C::Base, C>,
         trace: AssignedCell<C::Base, C::Base>,
     ) -> Result<(), Error> {
         layouter.assign_region(
@@ -313,7 +313,7 @@ fn random_point<C: CurveAffine>() -> C {
 
 struct MSMCircuit<C: CurveAffine, const N: usize> {
     points: Vec<C>,
-    divisor_witness: FunctionField<C>,
+    divisor_witness: FunctionField<C::Base, C>,
 }
 
 impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
@@ -350,7 +350,7 @@ impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
 #[cfg(test)]
 mod tests {
     use crate::utils::function_field::*;
-    use halo2_proofs::{dev::MockProver, halo2curves::secp256k1::Secp256k1Affine};
+    use halo2_proofs::dev::MockProver;
     use std::time::SystemTime;
 
     use super::*;
@@ -364,9 +364,9 @@ mod tests {
         let f = FunctionField::interpolate_incremental(&points);
         println!(
             "prepare divisor witness in {}s",
-            cur_time.elapsed().unwrap().as_secs()
+            cur_time.elapsed().unwrap().as_millis()
         );
-        let circuit = MSMCircuit::<Secp256k1Affine, N> {
+        let circuit = MSMCircuit::<G1Affine, N> {
             points,
             divisor_witness: f,
         };
@@ -389,7 +389,7 @@ mod tests {
         const N: usize = 100;
         let points = random_points_sum_zero(rng, N);
         let f = FunctionField::interpolate_incremental(&points);
-        let circuit = MSMCircuit::<Secp256k1Affine, N> {
+        let circuit = MSMCircuit::<G1Affine, N> {
             points,
             divisor_witness: f,
         };

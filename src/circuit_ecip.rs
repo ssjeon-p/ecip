@@ -273,7 +273,7 @@ impl<C: CurveAffine> MSMChip<C> {
     fn assign_divisors(
         &self,
         mut layouter: impl Layouter<C::Base>,
-        f: &FunctionField<C>,
+        f: &FunctionField<C::Base, C>,
         tr_prev: ACell<C::Base>,
         tr_last: Option<ACell<C::Base>>,
     ) -> Result<ACell<C::Base>, Error> {
@@ -418,7 +418,7 @@ fn random_point<C: CurveAffine>() -> C {
 struct MSMCircuit<C: CurveAffine, const N: usize> {
     points: Vec<C>,
     scalars: Vec<(C::Base, C::Base)>,
-    divisor_witness: Vec<FunctionField<C>>,
+    divisor_witness: Vec<FunctionField<C::Base, C>>,
 }
 
 impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
@@ -467,17 +467,14 @@ impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
 #[cfg(test)]
 mod tests {
     use crate::utils::function_field::*;
-    use halo2_proofs::{
-        dev::MockProver,
-        halo2curves::{secp256k1::Fp, secp256k1::Secp256k1Affine},
-    };
+    use halo2_proofs::dev::MockProver;
     use std::time::SystemTime;
 
     use super::*;
     #[test]
     fn test_ecip_circuit() {
-        let l: u32 = 3; // |scalar| < 3^l < q, where F_q is scalar field
-        const N: usize = 100;
+        let l: u32 = 161; // |scalar| < 3^l < q, where F_q is scalar field. For 256 bit scalar field, l <= 161
+        const N: usize = 10000;
         // we need 2N + l * (N + 10) rows and few more
         let row = 2 * N + l as usize * (N + 10);
         let mut k = 0;
@@ -485,28 +482,31 @@ mod tests {
             k += 1;
         }
 
-        println!("k = {:?}", k);
+        println!("The number of points = {}", N);
+        println!("Scalars are less than 3^{}", l);
+        println!("rows k = {}", k);
 
         let rng = &mut thread_rng();
         let mut points = random_points(rng, N);
         let mut scalars_int: Vec<isize> = vec![];
-        let mut scalars: Vec<(Fp, Fp)> = vec![];
+        let mut scalars: Vec<(Fr, Fr)> = vec![];
         for i in 0..N {
             scalars_int.push(rand::random::<isize>() % -(3isize.pow(l)));
             let (a, b) = split_num(scalars_int[i]);
             scalars.push((into_field(a), into_field(b)));
         }
-        scalars.push((Fp::ONE, Fp::ZERO));
+        scalars.push((Fr::ONE, Fr::ZERO));
         let cur_time = SystemTime::now();
-        let (divisor_witness, prod) = FunctionField::ecip_interpolate(&scalars_int, &points);
+        let (divisor_witness, prod) = FunctionField::ecip_interpolate_lev(&scalars_int, &points);
         points.push(-prod);
         // if you put wrong point, then fail
-        // points[N] = Secp256k1Affine::random(rng);
+        // points[N] = G1Affine::random(rng);
         println!(
-            "prepare divisor witness in {}s",
-            cur_time.elapsed().unwrap().as_secs()
+            "prepare divisor witness in {}ms",
+            cur_time.elapsed().unwrap().as_millis()
         );
-        let circuit = MSMCircuit::<Secp256k1Affine, N> {
+
+        let circuit = MSMCircuit::<G1Affine, N> {
             points,
             scalars,
             divisor_witness,
@@ -530,7 +530,7 @@ mod tests {
         const N: usize = 100;
         let points = random_points_sum_zero(rng, N);
         let f = FunctionField::interpolate_incremental(&points);
-        let circuit = MSMCircuit::<Secp256k1Affine, N> {
+        let circuit = MSMCircuit::<G1Affine, N> {
             points,
             divisor_witness: f,
         };
