@@ -1,9 +1,10 @@
 use crate::utils::function_field::*;
-use halo2_proofs::{arithmetic::Field, halo2curves::CurveAffine};
+use halo2_common::halo2curves::CurveExt;
+use halo2_proofs::arithmetic::Field;
 use num::integer::Roots;
 
 #[derive(Debug, Default, Clone)]
-pub struct MSMChallenge<C: CurveAffine> {
+pub struct MSMChallenge<C: CurveExt> {
     pub mu: C::Base,
     pub lambda: C::Base,
     pub points: [C; 3],
@@ -11,15 +12,15 @@ pub struct MSMChallenge<C: CurveAffine> {
 }
 
 #[allow(dead_code)]
-impl<C: CurveAffine> MSMChallenge<C> {
+impl<C: CurveExt> MSMChallenge<C> {
     pub fn from_simple(pts: (C, C)) -> Self {
-        let (x1, y1) = Self::to_xy(pts.0);
-        let (x2, y2) = Self::to_xy(pts.1);
+        let (x1, y1) = to_xy(pts.0);
+        let (x2, y2) = to_xy(pts.1);
         assert_ne!(x1, x2);
 
         let (lambda, mu) = FunctionField::secant_line(pts.0, pts.1).unwrap();
         let pt3 = FunctionField::another_zero_of_line(lambda, mu, pts.0, pts.1);
-        let (x3, y3) = Self::to_xy(pt3);
+        let (x3, y3) = to_xy(pt3);
 
         let d1 = ((x1 + x1 + x1) * x1 + C::a()) * (y1 + y1).invert().unwrap();
         let d2 = ((x2 + x2 + x2) * x2 + C::a()) * (y2 + y2).invert().unwrap();
@@ -36,7 +37,7 @@ impl<C: CurveAffine> MSMChallenge<C> {
     pub fn from_higher(pt: C) -> Self {
         let (lambda, mu) = FunctionField::tangent_line(pt);
         let pt3 = FunctionField::another_zero_of_line(lambda, mu, pt, pt);
-        let (x3, y3) = Self::to_xy(pt3);
+        let (x3, y3) = to_xy(pt3);
 
         let d3 = ((x3 + x3 + x3) * x3 + C::a()) * (y3 + y3).invert().unwrap();
 
@@ -50,20 +51,15 @@ impl<C: CurveAffine> MSMChallenge<C> {
 
     // evaluate dx/dz at point
     pub fn dx_dz_simple(pt: C, lambda: C::Base) -> C::Base {
-        let (x, y) = Self::to_xy(pt);
+        let (x, y) = to_xy(pt);
         (((x + x + x) * x + C::a()) * (y + y).invert().unwrap() - lambda)
             .invert()
             .unwrap()
     }
 
-    fn to_xy(pt: C) -> (C::Base, C::Base) {
-        let coord = pt.coordinates().unwrap();
-        (*coord.x(), *coord.y())
-    }
-
     pub fn higher_c2(&self) -> C::Base {
-        let x0 = *self.points[0].coordinates().unwrap().x();
-        let (x2, y2) = Self::to_xy(self.points[2]);
+        let x0 = to_xy(self.points[0]).0;
+        let (x2, y2) = to_xy(self.points[2]);
         ((y2 + y2) * (x0 - x2))
             * ((x2 + x2 + x2) * x2 + C::a() - (y2 + y2) * self.lambda)
                 .invert()
@@ -71,18 +67,24 @@ impl<C: CurveAffine> MSMChallenge<C> {
     }
 }
 
-pub fn trace_simple<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base {
-    let pt = point.coordinates().unwrap();
-    (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
+fn to_xy<C: CurveExt>(pt: C) -> (C::Base, C::Base) {
+    let coord = pt.jacobian_coordinates();
+    let z_inv = coord.2.invert().unwrap();
+    (coord.0 * z_inv, coord.1 * z_inv)
 }
 
-pub fn trace_higher<C: CurveAffine>(point: C, clg: &MSMChallenge<C>) -> C::Base {
-    let pt = point.coordinates().unwrap();
-    let x0 = *clg.points[0].coordinates().unwrap().x();
-    (x0 - *pt.x()) * (clg.mu + clg.lambda * *pt.x() - *pt.y()).invert().unwrap()
+pub fn trace_simple<C: CurveExt>(point: C, clg: &MSMChallenge<C>) -> C::Base {
+    let (x, y) = to_xy(point);
+    (clg.mu + clg.lambda * x - y).invert().unwrap()
 }
 
-// given third root of unity w \in Fq, split scalar = a + w b into short a,b
+pub fn trace_higher<C: CurveExt>(point: C, clg: &MSMChallenge<C>) -> C::Base {
+    let (x, y) = to_xy(point);
+    let x0 = to_xy(clg.points[0]).0;
+    (x0 - x) * (clg.mu + clg.lambda * x - y).invert().unwrap()
+}
+
+// given third root of unity w \in Fr, split scalar = a + w b into short a,b
 // lattice reduction method in https://link.springer.com/chapter/10.1007/3-540-44647-8_11
 pub fn split_cm(scalar: Vec<isize>, l: isize, n: isize) -> Vec<(isize, isize)> {
     // todo: erase this
@@ -144,6 +146,9 @@ fn nearest_int(a: isize, b: isize) -> isize {
 #[cfg(test)]
 mod test {
     use super::*;
+    use halo2_common::halo2curves::{group::Group, grumpkin::Fq};
+    use halo2_liam_eagen_msm::regular_functions_utils::Grumpkin;
+
     use rand::thread_rng;
 
     #[test]
@@ -156,26 +161,27 @@ mod test {
 
         // random challenge
         let rng = &mut thread_rng();
-        let pt0 = G1Affine::random(rng.clone());
-        let pt1 = G1Affine::random(rng.clone());
+        let pt0 = Grumpkin::random(rng.clone());
+        let pt1 = Grumpkin::random(rng.clone());
         let clg = MSMChallenge::from_simple((pt0, pt1));
 
         // equation (1) in (https://eprint.iacr.org/2022/596)
-        let dx_dz: Vec<Fr> = clg
-            .points
-            .into_iter()
-            .map(|pt| MSMChallenge::dx_dz_simple(pt, clg.lambda))
-            .collect();
+        let dx_dz: [Fq; 3] = [
+            MSMChallenge::dx_dz_simple(clg.points[0], clg.lambda),
+            MSMChallenge::dx_dz_simple(clg.points[1], clg.lambda),
+            MSMChallenge::dx_dz_simple(clg.points[2], clg.lambda),
+        ];
 
-        let d_prime_d: Vec<Fr> = clg
-            .points
-            .into_iter()
-            .map(|pt| f.evaluate_derivative(pt) * f.evaluate(pt).invert().unwrap())
-            .collect();
+        // todo: this compute f, f' 3 times
+        let d_prime_d: [Fq; 3] = [
+            f.evaluate_derivative(clg.points[0]) * f.evaluate(clg.points[0]).invert().unwrap(),
+            f.evaluate_derivative(clg.points[1]) * f.evaluate(clg.points[1]).invert().unwrap(),
+            f.evaluate_derivative(clg.points[2]) * f.evaluate(clg.points[2]).invert().unwrap(),
+        ];
 
         let lhs = field_inner_product(&dx_dz, &d_prime_d);
-        let rhs = points.iter().fold(Fr::ZERO, |acc, &next| {
-            acc + trace_simple::<G1Affine>(next, &clg)
+        let rhs = points.iter().fold(Fq::ZERO, |acc, &next| {
+            acc + trace_simple::<Grumpkin>(next, &clg)
         });
 
         assert_eq!(lhs, rhs);
@@ -191,7 +197,7 @@ mod test {
 
         // random challenge
         let rng = &mut thread_rng();
-        let pt = G1Affine::random(rng);
+        let pt = Grumpkin::random(rng);
         let clg = MSMChallenge::from_higher(pt);
 
         // equation (2) in (https://eprint.iacr.org/2022/596)
@@ -201,8 +207,8 @@ mod test {
         let d_prime_d_2 =
             f.evaluate_derivative(clg.points[2]) * f.evaluate(clg.points[2]).invert().unwrap();
         let rhs = c2 * d_prime_d_2 - (c2 + clg.lambda + clg.lambda) * d_prime_d_0;
-        let lhs = points.iter().fold(Fr::ZERO, |acc, &next| {
-            acc + trace_higher::<G1Affine>(next, &clg)
+        let lhs = points.iter().fold(Fq::ZERO, |acc, &next| {
+            acc + trace_higher::<Grumpkin>(next, &clg)
         });
 
         assert_eq!(lhs, rhs);
@@ -219,23 +225,23 @@ mod test {
             scalars.push(rand::random::<isize>() % -10000);
         }
 
-        let pt1 = G1Affine::random(rng.clone());
-        let pt2 = G1Affine::random(rng.clone());
+        let pt1 = Grumpkin::random(rng.clone());
+        let pt2 = Grumpkin::random(rng.clone());
         let clg = MSMChallenge::from_simple((pt1, pt2));
 
-        let mut lhs = Fr::ZERO;
-        let mut digit = Fr::ONE;
+        let mut lhs = Fq::ZERO;
+        let mut digit = Fq::ONE;
         let (divisor_witness, prod) = FunctionField::ecip_interpolate_lev(&scalars, &points);
         assert_eq!(prod, curve_inner_product(&scalars, &points));
 
-        let dx_dz: Vec<Fr> = clg
+        let dx_dz: Vec<Fq> = clg
             .points
             .into_iter()
             .map(|pt| MSMChallenge::dx_dz_simple(pt, clg.lambda))
             .collect();
 
         for f in divisor_witness.iter() {
-            let d_prime_d: Vec<Fr> = clg
+            let d_prime_d: Vec<Fq> = clg
                 .points
                 .into_iter()
                 .map(|pt| f.evaluate_derivative(pt) * f.evaluate(pt).invert().unwrap())
@@ -264,14 +270,14 @@ mod test {
             scalars.push(rand::random::<isize>() % -10000);
         }
 
-        let pt = G1Affine::random(rng.clone());
+        let pt = Grumpkin::random(rng.clone());
         let clg = MSMChallenge::from_higher(pt);
         let c2 = clg.higher_c2();
         let c2_lam = c2 + clg.lambda + clg.lambda;
 
         // equation (3) in (https://eprint.iacr.org/2022/596)
-        let mut lhs = Fr::ZERO;
-        let mut digit = Fr::ONE;
+        let mut lhs = Fq::ZERO;
+        let mut digit = Fq::ONE;
         let (divisor_witness, prod) = FunctionField::ecip_interpolate_lev(&scalars, &points);
         assert_eq!(prod, curve_inner_product(&scalars, &points));
         for f in divisor_witness.iter() {
@@ -286,8 +292,8 @@ mod test {
         let mut trace = trace_higher(-prod, &clg);
         for i in 0..n {
             let (a, b) = split_num(scalars[i]);
-            trace += into_field::<Fr>(a) * trace_higher(points[i], &clg);
-            trace += into_field::<Fr>(b) * trace_higher(-points[i], &clg);
+            trace += into_field::<Fq>(a) * trace_higher(points[i], &clg);
+            trace += into_field::<Fq>(b) * trace_higher(-points[i], &clg);
         }
 
         assert_eq!(lhs, trace);

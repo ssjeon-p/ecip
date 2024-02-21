@@ -1,19 +1,19 @@
 use crate::utils::function_field::FunctionField;
 use crate::utils::weil_reciprocity::*;
+use halo2_common::halo2curves::CurveExt;
 use halo2_proofs::circuit::AssignedCell;
 use halo2_proofs::plonk::Expression;
 use halo2_proofs::poly::Rotation;
 use halo2_proofs::{
     arithmetic::Field,
     circuit::{Layouter, SimpleFloorPlanner, Value},
-    halo2curves::CurveAffine,
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Selector},
 };
 use rand::thread_rng;
 
 // todo: enable to use different curve for zkp and ecip
 #[derive(Debug, Clone)]
-pub struct MSMConfig<C: CurveAffine> {
+pub struct MSMConfig<C: CurveExt> {
     adv: [Column<Advice>; 4],
 
     s_pt: Selector,
@@ -24,7 +24,7 @@ pub struct MSMConfig<C: CurveAffine> {
     clg: MSMChallenge<C>,
 }
 
-impl<C: CurveAffine> MSMConfig<C> {
+impl<C: CurveExt> MSMConfig<C> {
     pub fn configure(meta: &mut ConstraintSystem<C::Base>, n: usize) -> Self {
         let n = (n + n % 2) as i32;
 
@@ -51,7 +51,7 @@ impl<C: CurveAffine> MSMConfig<C> {
             let s_pt = meta.query_selector(s_pt);
             let lambda = Expression::Constant(clg.lambda);
             let mu = Expression::Constant(clg.mu);
-            let x_one = Expression::Constant(*clg.points[0].coordinates().unwrap().x());
+            let x_one = Expression::Constant(to_x(clg.points[0]));
 
             vec![
                 s_pt * ((trace.cur() - trace.prev()) * (mu + lambda * x.cur() - y.cur()) - x_one
@@ -64,10 +64,8 @@ impl<C: CurveAffine> MSMConfig<C> {
             let [a, b, f_0, f_2] = adv;
             let s_div = meta.query_selector(s_div);
 
-            let pt0 = clg.points[0].coordinates().unwrap();
-            let pt2 = clg.points[2].coordinates().unwrap();
-            let (x0, y0) = (*pt0.x(), *pt0.y());
-            let (x2, y2) = (*pt2.x(), *pt2.y());
+            let (x0, y0) = to_xy(clg.points[0]);
+            let (x2, y2) = to_xy(clg.points[2]);
 
             let x0 = Expression::Constant(x0);
             let y0 = Expression::Constant(y0);
@@ -85,10 +83,8 @@ impl<C: CurveAffine> MSMConfig<C> {
             let [a, b, f_0, f_2] = adv;
             let s_div_prime = meta.query_selector(s_div_prime);
 
-            let pt0 = clg.points[0].coordinates().unwrap();
-            let pt2 = clg.points[2].coordinates().unwrap();
-            let (x0, y0) = (*pt0.x(), *pt0.y());
-            let (x2, y2) = (*pt2.x(), *pt2.y());
+            let (x0, y0) = to_xy(clg.points[0]);
+            let (x2, y2) = to_xy(clg.points[2]);
 
             let x0 = Expression::Constant(x0);
             let y0 = Expression::Constant(y0);
@@ -140,12 +136,12 @@ impl<C: CurveAffine> MSMConfig<C> {
 }
 
 #[derive(Debug, Clone)]
-pub struct MSMChip<C: CurveAffine> {
+pub struct MSMChip<C: CurveExt> {
     config: MSMConfig<C>,
     n: usize,
 }
 
-impl<C: CurveAffine> MSMChip<C> {
+impl<C: CurveExt> MSMChip<C> {
     pub fn new(config: MSMConfig<C>, n: usize) -> Self {
         Self {
             config,
@@ -171,18 +167,18 @@ impl<C: CurveAffine> MSMChip<C> {
                 )?;
                 for (offset, pt) in points.iter().enumerate() {
                     self.config.s_pt.enable(&mut region, offset + 1)?;
-                    let pt = pt.coordinates().unwrap();
+                    let (x, y) = to_xy(*pt);
                     region.assign_advice(
                         || "x_i",
                         self.config.adv[0],
                         offset + 1,
-                        || Value::known(*pt.x()),
+                        || Value::known(x),
                     )?;
                     region.assign_advice(
                         || "y_i",
                         self.config.adv[1],
                         offset + 1,
-                        || Value::known(*pt.y()),
+                        || Value::known(y),
                     )?;
                     let tr = trace_higher(points[offset], &self.config.clg);
                     trace = region.assign_advice(
@@ -214,8 +210,8 @@ impl<C: CurveAffine> MSMChip<C> {
                     .map(|i| *f.b.coeff.get(i).unwrap_or(&C::Base::ZERO))
                     .collect();
 
-                let (x0, y0) = Self::to_xy(self.config.clg.points[0]);
-                let (x2, y2) = Self::to_xy(self.config.clg.points[2]);
+                let (x0, y0) = to_xy(self.config.clg.points[0]);
+                let (x2, y2) = to_xy(self.config.clg.points[2]);
                 let (d0, d2) = (self.config.clg.dx_dy[0], self.config.clg.dx_dy[2]);
 
                 let mut f_0 = Value::known(C::Base::ZERO);
@@ -287,15 +283,21 @@ impl<C: CurveAffine> MSMChip<C> {
             },
         )
     }
+}
 
-    fn to_xy(pt: C) -> (C::Base, C::Base) {
-        let coord = pt.coordinates().unwrap();
-        (*coord.x(), *coord.y())
-    }
+fn to_xy<C: CurveExt>(pt: C) -> (C::Base, C::Base) {
+    let coord = pt.jacobian_coordinates();
+    let z_inv = coord.2.invert().unwrap();
+    (coord.0 * z_inv, coord.1 * z_inv)
+}
+
+fn to_x<C: CurveExt>(pt: C) -> C::Base {
+    let coord = pt.jacobian_coordinates();
+    coord.0 * coord.2.invert().unwrap()
 }
 
 // for test
-fn random_point<C: CurveAffine>() -> C {
+fn random_point<C: CurveExt>() -> C {
     let rng = &mut thread_rng();
     let mut x;
     let out;
@@ -308,15 +310,15 @@ fn random_point<C: CurveAffine>() -> C {
             break;
         }
     }
-    C::from_xy(x, out).unwrap()
+    C::new_jacobian(x, out, C::Base::ONE).unwrap()
 }
 
-struct MSMCircuit<C: CurveAffine, const N: usize> {
+struct MSMCircuit<C: CurveExt, const N: usize> {
     points: Vec<C>,
     divisor_witness: FunctionField<C::Base, C>,
 }
 
-impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
+impl<C: CurveExt, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
     type Config = MSMConfig<C>;
     type FloorPlanner = SimpleFloorPlanner;
 
@@ -350,6 +352,7 @@ impl<C: CurveAffine, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
 #[cfg(test)]
 mod tests {
     use crate::utils::function_field::*;
+    use halo2_liam_eagen_msm::regular_functions_utils::Grumpkin;
     use halo2_proofs::dev::MockProver;
     use std::time::SystemTime;
 
@@ -366,7 +369,7 @@ mod tests {
             "prepare divisor witness in {}s",
             cur_time.elapsed().unwrap().as_millis()
         );
-        let circuit = MSMCircuit::<G1Affine, N> {
+        let circuit = MSMCircuit::<Grumpkin, N> {
             points,
             divisor_witness: f,
         };
