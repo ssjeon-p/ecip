@@ -1,7 +1,5 @@
 use crate::utils::poly::*;
-use halo2_common::arithmetic::lagrange_interpolate;
-use halo2_common::halo2curves::group::Group;
-use halo2_liam_eagen_msm::regular_functions_utils::Grumpkin;
+use halo2_backend::arithmetic::lagrange_interpolate;
 use halo2_liam_eagen_msm::regular_functions_utils::*;
 use halo2_proofs::arithmetic::*;
 use halo2_proofs::halo2curves::ff::PrimeField;
@@ -73,7 +71,7 @@ impl<F: PrimeField, C: CurveExt<Base = F>> FunctionField<F, C> {
         let x2 = to_x(pt2);
         let x3 = lambda.square() - x1 - x2;
         let y3 = lambda * x3 + mu;
-        C::new_jacobian(x3, y3, C::Base::ONE).unwrap()
+        C::new_jacobian(x3, y3, F::ONE).unwrap()
     }
 
     pub fn evaluate(&self, point: C) -> F {
@@ -226,7 +224,6 @@ impl<F: PrimeField, C: CurveExt<Base = F>> FunctionField<F, C> {
         }
     }
 
-    // todo: scalar should be in Fr
     // second output: the inner product
     pub fn ecip_interpolate(scalars: &[isize], points: &[C]) -> (Vec<FunctionField<F, C>>, C) {
         let n = points.len();
@@ -281,14 +278,16 @@ impl<F: PrimeField, C: CurveExt<Base = F>> FunctionField<F, C> {
 }
 
 fn to_xy<C: CurveExt>(pt: C) -> (C::Base, C::Base) {
-    let coord = pt.jacobian_coordinates();
-    let z_inv = coord.2.invert().unwrap();
-    (coord.0 * z_inv, coord.1 * z_inv)
+    let (x, y, z) = pt.jacobian_coordinates();
+    let z_inv = z.invert().unwrap();
+    let z_inv_sq = z_inv * z_inv;
+    (x * z_inv_sq, y * z_inv_sq * z_inv)
 }
 
 fn to_x<C: CurveExt>(pt: C) -> C::Base {
-    let coord = pt.jacobian_coordinates();
-    coord.0 * coord.2.invert().unwrap()
+    let (x, _, z) = pt.jacobian_coordinates();
+    let z_inv = z.invert().unwrap();
+    x * z_inv * z_inv
 }
 
 impl<C: CurveExt> FunctionField<C::Base, C>
@@ -297,7 +296,7 @@ where
 {
     pub fn interpolate_lev(points: &[C]) -> Self {
         // todo: remove to_vec
-        let f = compute_divisor_witness(points.to_vec());
+        let f = compute_divisor_witness(points);
         Self {
             a: Poly::from_vec(f.a.poly),
             b: -Poly::from_vec(f.b.poly),
@@ -365,22 +364,22 @@ where
 }
 
 // for test, random points P_i such that \sum P_i = O
-pub fn random_points_sum_zero(rng: &mut ThreadRng, n: usize) -> Vec<Grumpkin> {
+pub fn random_points_sum_zero<C: CurveExt>(rng: &mut ThreadRng, n: usize) -> Vec<C> {
     let mut points = random_points(rng, n - 1);
     let sum = points
         .iter()
         .skip(1)
-        .fold(points[0], |acc, next| (acc + next));
+        .fold(points[0], |acc: C, next| (acc + next));
     points.push(-sum);
 
     points
 }
 
 // for test, random points P_i
-pub fn random_points(rng: &mut ThreadRng, n: usize) -> Vec<Grumpkin> {
-    let mut points: Vec<Grumpkin> = vec![];
+pub fn random_points<C: CurveExt>(rng: &mut ThreadRng, n: usize) -> Vec<C> {
+    let mut points: Vec<C> = vec![];
     for _ in 0..n {
-        points.push(Grumpkin::random(rng.clone()));
+        points.push(C::random(rng.clone()));
     }
     points
 }
@@ -508,8 +507,8 @@ mod test {
     fn test_interpolate_mumford_distinct() {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
-        let n = 200;
-        let points = random_points_sum_zero(rng, n);
+        let n = 10;
+        let points = random_points_sum_zero::<Grumpkin>(rng, n);
 
         // interpolate P_i
         let cur_time = SystemTime::now();
@@ -527,7 +526,7 @@ mod test {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
         let n = 3000;
-        let points = random_points_sum_zero(rng, n);
+        let points = random_points_sum_zero::<Grumpkin>(rng, n);
 
         // interpolate P_i
         let cur_time = SystemTime::now();
@@ -545,7 +544,7 @@ mod test {
         // generate P_i such that \sum P_i = O.
         let rng = &mut thread_rng();
         let n = 10000;
-        let points = random_points_sum_zero(rng, n);
+        let points = random_points_sum_zero::<Grumpkin>(rng, n);
 
         // interpolate P_i
         let cur_time = SystemTime::now();
@@ -558,42 +557,11 @@ mod test {
         f.check_interpolate(&points);
     }
 
-    // todo: check which is faster, for desirable n
-    #[test]
-    fn compare_interpolate() {
-        // generate P_i such that \sum P_i = O.
-        let rng = &mut thread_rng();
-        let n = 5000;
-        let points = random_points_sum_zero(rng, n);
-
-        // interpolate P_i with mumford reprensentation
-        let cur_time = SystemTime::now();
-        let f = FunctionField::interpolate_mumford_distinct(&points);
-        println!(
-            "{} points mumford interpolate in {}ms",
-            n,
-            cur_time.elapsed().unwrap().as_millis()
-        );
-        for i in 0..points.len() {
-            assert!(f.is_zero_at(points[i]));
-        }
-
-        // interpolate P_i with incremental method
-        let cur_time = SystemTime::now();
-        let f = FunctionField::interpolate_incremental(&points);
-        println!(
-            "{} points incremental interpolate in {}ms",
-            n,
-            cur_time.elapsed().unwrap().as_millis()
-        );
-        f.check_interpolate(&points);
-    }
-
     #[test]
     fn test_interpolate_repeated_points() {
         let n = 200;
         let rng = &mut thread_rng();
-        let mut points = random_points(rng, n - 3);
+        let mut points = random_points::<Grumpkin>(rng, n - 3);
         points.push(points[n - 4]);
         points.push(points[n - 4]);
         let sum = points

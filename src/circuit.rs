@@ -286,14 +286,16 @@ impl<C: CurveExt> MSMChip<C> {
 }
 
 fn to_xy<C: CurveExt>(pt: C) -> (C::Base, C::Base) {
-    let coord = pt.jacobian_coordinates();
-    let z_inv = coord.2.invert().unwrap();
-    (coord.0 * z_inv, coord.1 * z_inv)
+    let (x, y, z) = pt.jacobian_coordinates();
+    let z_inv = z.invert().unwrap();
+    let z_inv_sq = z_inv * z_inv;
+    (x * z_inv_sq, y * z_inv_sq * z_inv)
 }
 
 fn to_x<C: CurveExt>(pt: C) -> C::Base {
-    let coord = pt.jacobian_coordinates();
-    coord.0 * coord.2.invert().unwrap()
+    let (x, _, z) = pt.jacobian_coordinates();
+    let z_inv = z.invert().unwrap();
+    x * z_inv * z_inv
 }
 
 // for test
@@ -364,9 +366,9 @@ mod tests {
         const N: usize = 200;
         let points = random_points_sum_zero(rng, N);
         let cur_time = SystemTime::now();
-        let f = FunctionField::interpolate_incremental(&points);
+        let f = FunctionField::interpolate_lev(&points);
         println!(
-            "prepare divisor witness in {}s",
+            "prepare divisor witness in {}ms",
             cur_time.elapsed().unwrap().as_millis()
         );
         let circuit = MSMCircuit::<Grumpkin, N> {

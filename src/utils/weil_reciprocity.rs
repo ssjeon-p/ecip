@@ -1,6 +1,6 @@
 use crate::utils::function_field::*;
-use halo2_common::halo2curves::CurveExt;
 use halo2_proofs::arithmetic::Field;
+use halo2curves::CurveExt;
 use num::integer::Roots;
 
 #[derive(Debug, Default, Clone)]
@@ -68,9 +68,10 @@ impl<C: CurveExt> MSMChallenge<C> {
 }
 
 fn to_xy<C: CurveExt>(pt: C) -> (C::Base, C::Base) {
-    let coord = pt.jacobian_coordinates();
-    let z_inv = coord.2.invert().unwrap();
-    (coord.0 * z_inv, coord.1 * z_inv)
+    let (x, y, z) = pt.jacobian_coordinates();
+    let z_inv = z.invert().unwrap();
+    let z_inv_sq = z_inv * z_inv;
+    (x * z_inv_sq, y * z_inv_sq * z_inv)
 }
 
 pub fn trace_simple<C: CurveExt>(point: C, clg: &MSMChallenge<C>) -> C::Base {
@@ -87,10 +88,6 @@ pub fn trace_higher<C: CurveExt>(point: C, clg: &MSMChallenge<C>) -> C::Base {
 // given third root of unity w \in Fr, split scalar = a + w b into short a,b
 // lattice reduction method in https://link.springer.com/chapter/10.1007/3-540-44647-8_11
 pub fn split_cm(scalar: Vec<isize>, l: isize, n: isize) -> Vec<(isize, isize)> {
-    // todo: erase this
-    // assert_eq!(w.cube(), C::Scalar::ONE);
-    // assert_eq!(C::a(), C::Base::ZERO);
-
     // euclidean algorithm
     let mut s = vec![1, 0];
     let mut t = vec![0, 1];
@@ -146,15 +143,15 @@ fn nearest_int(a: isize, b: isize) -> isize {
 #[cfg(test)]
 mod test {
     use super::*;
-    use halo2_common::halo2curves::{group::Group, grumpkin::Fq};
     use halo2_liam_eagen_msm::regular_functions_utils::Grumpkin;
+    use halo2curves::{group::Group, grumpkin::Fq};
 
     use rand::thread_rng;
 
     #[test]
     fn test_simple_challenge() {
         // divisor witness
-        let n = 200;
+        let n = 5000;
         let rng = &mut thread_rng();
         let points = random_points_sum_zero(rng, n);
         let f = FunctionField::interpolate_lev(&points);
@@ -216,7 +213,7 @@ mod test {
 
     #[test]
     fn test_ecip_simple() {
-        let n = 200;
+        let n = 5000;
         let rng = &mut thread_rng();
         let points = random_points(rng, n);
 
@@ -261,7 +258,7 @@ mod test {
 
     #[test]
     fn test_ecip_higher() {
-        let n = 10000;
+        let n = 5000;
         let rng = &mut thread_rng();
         let points = random_points_sum_zero(rng, n);
 

@@ -6,9 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-halo2-liam-eagen-msm = { git = "https://github.com/ssjeon-p/halo2-liam-eagen-msm" }
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git" }
+halo2_backend = { git = "https://github.com/privacy-scaling-explorations/halo2.git" }
 halo2_common = { git = "https://github.com/privacy-scaling-explorations/halo2.git" }
+halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves.git" }
+halo2-liam-eagen-msm = { git = "https://github.com/ssjeon-p/halo2-liam-eagen-msm.git" }
 rand = "0.8"
 plotters = { version = "0.3.0", optional = true }
 num = "0.4.0"

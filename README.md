@@ -18,12 +18,19 @@ cargo test test_ecip_circuit --release -- --nocapture
 
 * weil_reciprocity.rs
 
-    Using the Weil reciprocity, we can prove two different type of elliptic curve addition, $\sum_{i=0}^{N-1} P_i = O$ and $\sum_{i=0}^{N-1} e_i P_i = Q$. The challenge from the verifier is a line in projective space. The line can intersects with the elliptic curve with three distinct points(simple challenge) or two points(higher challenge). The details are described [here](https://ssjeon.blogspot.com/2023/12/liam-eagens-elliptic-curve-inner.html). This module contains such four possible tests.
+    Using the Weil reciprocity, we can prove two different type of elliptic curve addition, $\sum _{i=0}^{N-1} P_i = O$ and $\sum _{i=0}^{N-1} e_i P_i = Q$. The challenge from the verifier is a line in projective space. The line can intersects with the elliptic curve with three distinct points(simple challenge) or two points(higher challenge). The details are described [here](https://ssjeon.blogspot.com/2023/12/liam-eagens-elliptic-curve-inner.html). This module contains such four possible tests.
 
 * circuit.rs
 
-    This is a circuit proves $\sum_{i=0}^{N-1} P_i = O$ with higher challenge. Four columns and $2 N$ rows are needed.
+    This is a circuit proves $\sum _{i=0}^{N-1} P_i = O$ with higher challenge. Four columns and $2 N$ rows are needed.
 
 * circuit_ecip.rs
 
-    This is a circuit proves $\sum_{i=0}^{N-1} e_i P_i = Q$ with higher challenge. Four columns and $2N + Nl$ rows are needed. Here the scalars $e_i$ are represented by signed integers with size less than $3^l$. If $\mathbb{F}_q \cong E(\mathbb{F}_p)$, then we may choose $l$ such that $q < 3^l$.
+    This is a circuit proves $\sum _{i=0}^{N-1} e_i P_i = Q$ with higher challenge. Four columns and $2N + Nl$ rows are needed. Here the scalars $e_i$ are represented by signed integers with size less than $3^l$. If $\mathbb{F}_q \cong E(\mathbb{F}_p)$, then we may choose $l$ such that $q < 3^l$.
+
+# todo
+
+* Enable to use different elliptic curve in ECIP and circuit.
+* Make a challenge after commiting points and scalars(column 1 and 2).
+* Use mumford representation to calculate divisor witness. I predict this will be faster than incremental method.
+* Use CM structure to speed up.

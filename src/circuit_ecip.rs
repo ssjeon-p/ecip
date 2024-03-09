@@ -1,6 +1,5 @@
-use crate::utils::function_field::FunctionField;
+use crate::utils::function_field::*;
 use crate::utils::weil_reciprocity::*;
-use halo2_common::halo2curves::CurveExt;
 use halo2_proofs::circuit::AssignedCell;
 use halo2_proofs::plonk::Expression;
 use halo2_proofs::poly::Rotation;
@@ -9,6 +8,7 @@ use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Selector},
 };
+use halo2curves::CurveExt;
 use rand::thread_rng;
 
 type ACell<F> = AssignedCell<F, F>;
@@ -185,7 +185,7 @@ impl<C: CurveExt> MSMChip<C> {
         &self,
         mut layouter: impl Layouter<C::Base>,
         points: &[C],
-        scalars: &[(C::Base, C::Base)],
+        scalars: &[isize],
     ) -> Result<ACell<C::Base>, Error> {
         let n = self.n;
         layouter.assign_region(
@@ -232,17 +232,19 @@ impl<C: CurveExt> MSMChip<C> {
 
                 for (offset, i) in (n + 2..=2 * n + 2).zip(0..=n) {
                     self.config.s_scalar.enable(&mut region, offset)?;
+                    let (a, b) = split_num(scalars[i]);
+                    let (a, b): (C::Base, C::Base) = (into_field(a), into_field(b));
                     region.assign_advice(
                         || "scalar a",
                         self.config.adv[0],
                         offset,
-                        || Value::known(scalars[i].0),
+                        || Value::known(a),
                     )?;
                     region.assign_advice(
                         || "scalar b",
                         self.config.adv[1],
                         offset,
-                        || Value::known(scalars[i].1),
+                        || Value::known(b),
                     )?;
                     acc = region.assign_advice(
                         || "trace_acc",
@@ -250,8 +252,8 @@ impl<C: CurveExt> MSMChip<C> {
                         offset,
                         || {
                             acc.value().copied()
-                                + Value::known(scalars[i].0) * trace[i].value().copied()
-                                + Value::known(scalars[i].1) * trace_neg[i].value().copied()
+                                + Value::known(a) * trace[i].value().copied()
+                                + Value::known(b) * trace_neg[i].value().copied()
                         },
                     )?;
                 }
@@ -399,14 +401,16 @@ impl<C: CurveExt> MSMChip<C> {
 }
 
 fn to_xy<C: CurveExt>(pt: C) -> (C::Base, C::Base) {
-    let coord = pt.jacobian_coordinates();
-    let z_inv = coord.2.invert().unwrap();
-    (coord.0 * z_inv, coord.1 * z_inv)
+    let (x, y, z) = pt.jacobian_coordinates();
+    let z_inv = z.invert().unwrap();
+    let z_inv_sq = z_inv * z_inv;
+    (x * z_inv_sq, y * z_inv_sq * z_inv)
 }
 
 fn to_x<C: CurveExt>(pt: C) -> C::Base {
-    let coord = pt.jacobian_coordinates();
-    coord.0 * coord.2.invert().unwrap()
+    let (x, _, z) = pt.jacobian_coordinates();
+    let z_inv = z.invert().unwrap();
+    x * z_inv * z_inv
 }
 
 // for test
@@ -428,7 +432,7 @@ fn random_point<C: CurveExt>() -> C {
 
 struct MSMCircuit<C: CurveExt, const N: usize> {
     points: Vec<C>,
-    scalars: Vec<(C::Base, C::Base)>,
+    scalars: Vec<isize>,
     divisor_witness: Vec<FunctionField<C::Base, C>>,
 }
 
@@ -439,7 +443,7 @@ impl<C: CurveExt, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
     fn without_witnesses(&self) -> Self {
         Self {
             points: vec![C::identity(); N],
-            scalars: vec![(C::Base::ZERO, C::Base::ZERO); N],
+            scalars: vec![0; N],
             divisor_witness: vec![FunctionField::identity()],
         }
     }
@@ -478,24 +482,10 @@ impl<C: CurveExt, const N: usize> Circuit<C::Base> for MSMCircuit<C, N> {
 #[cfg(test)]
 mod tests {
     use crate::utils::function_field::*;
-    use halo2_common::{
-        halo2curves::{bn256::Bn256, grumpkin::Fq},
-        transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer},
-    };
     use halo2_liam_eagen_msm::regular_functions_utils::Grumpkin;
-    use halo2_proofs::{
-        dev::MockProver,
-        plonk::{create_proof, keygen_pk, keygen_vk, verify_proof},
-        poly::{
-            commitment::ParamsProver,
-            kzg::{
-                commitment::{KZGCommitmentScheme, ParamsKZG},
-                multiopen::{ProverGWC, ProverSHPLONK, VerifierSHPLONK},
-                strategy::{self, SingleStrategy},
-            },
-        },
-    };
-    use rand::rngs::OsRng;
+    use halo2_proofs::
+        dev::MockProver
+    ;
     use std::time::SystemTime;
 
     use super::*;
@@ -515,18 +505,16 @@ mod tests {
         println!("rows k = {}", k);
 
         let rng = &mut thread_rng();
-        let mut points = random_points(rng, N);
-        let mut scalars_int: Vec<isize> = vec![];
-        let mut scalars: Vec<(Fq, Fq)> = vec![];
-        for i in 0..N {
-            scalars_int.push(rand::random::<isize>() % -(3isize.pow(l)));
-            let (a, b) = split_num(scalars_int[i]);
-            scalars.push((into_field(a), into_field(b)));
+        let mut points = random_points::<Grumpkin>(rng, N);
+        let mut scalars: Vec<isize> = vec![];
+        let scalar_max = 3isize.pow(l);
+        for _ in 0..N {
+            scalars.push(rand::random::<isize>() % -scalar_max);
         }
-        scalars.push((Fq::ONE, Fq::ZERO));
         let cur_time = SystemTime::now();
-        let (divisor_witness, prod) = FunctionField::ecip_interpolate_lev(&scalars_int, &points);
+        let (divisor_witness, prod) = FunctionField::ecip_interpolate_lev(&scalars, &points);
         points.push(-prod);
+        scalars.push(1);
         // if you put wrong point, then fail
         // points[N] = G1Affine::random(rng);
         println!(
@@ -539,23 +527,8 @@ mod tests {
             scalars,
             divisor_witness,
         };
-
-        let params: ParamsKZG<Bn256> = ParamsKZG::setup(3, OsRng);
-        let vk = keygen_vk(&params, &circuit).expect("keygen_vk should not fail");
-        let pk = keygen_pk(&params, vk, &circuit).expect("keygen_pk should not fail");
-        let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
-
-        let proof = create_proof::<KZGCommitmentScheme<_>, ProverSHPLONK<_>, _, _, _, _>(
-            &params,
-            &pk,
-            &[circuit],
-            &[],
-            OsRng,
-            &mut transcript,
-        )
-        .expect("proof generation should not fail");
-
-        // let v = verify_proof(&params, &vk, SingleStrategy::new(&params), &[], &mut transcript);
+        let prover = MockProver::run(k, &circuit, vec![]).unwrap();
+        prover.assert_satisfied();
     }
 
     #[cfg(feature = "dev-graph")]
