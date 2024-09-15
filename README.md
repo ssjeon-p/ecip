@@ -4,9 +4,9 @@ Implementation of [Liam Eagen](https://eprint.iacr.org/2022/596)'s elliptic curv
 
 # Test
 
-To test the circuit,
+To test,
 ```
-cargo test test_ecip_circuit --release -- --nocapture
+cargo test --release -- --nocapture
 ```
 
 

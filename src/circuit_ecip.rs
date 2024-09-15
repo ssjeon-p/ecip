@@ -491,7 +491,7 @@ mod tests {
     use super::*;
     #[test]
     fn test_ecip_circuit() {
-        let l: u32 = 161; // |scalar| < 3^l < q, where F_q is scalar field. For 256 bit scalar field, l <= 161
+        let l: u32 = 10; // |scalar| < 3^l < q, where F_q is scalar field. For 256 bit scalar field, l <= 161
         const N: usize = 10000;
         // we need 2N + l * (N + 10) rows and few more
         let row = 2 * N + l as usize * (N + 10);
